@@ -3,8 +3,18 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+<<<<<<< HEAD
+    "build": "npm --prefix client install --include=dev --no-audit --no-fund && npm --prefix client run build",
+    "start": "node api/index.js",
+    "start:dev": "NODE_OPTIONS=--no-deprecation node server/server.js",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && NODE_OPTIONS=--no-deprecation npm start",
+    "client": "cd client && npm start",
+    "install-all": "npm install && cd client && npm install && cd ../server && npm install"
+=======
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node --no-deprecation server.js"
+>>>>>>> dc1a17c (rupee changes)
   },
   "keywords": [],
   "author": "",
@@ -13,7 +23,12 @@
   "dependencies": {
     "axios": "^1.13.5",
     "bcrypt": "^6.0.0",
+<<<<<<< HEAD
+    "cloudinary": "^1.41.3",
+    "compression": "^1.7.4",
+=======
     "cloudinary": "^2.9.0",
+>>>>>>> dc1a17c (rupee changes)
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -21,6 +36,18 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.2",
+<<<<<<< HEAD
+    "multer": "^1.4.5-lts.1",
+    "multer-storage-cloudinary": "^4.0.0",
+    "nodemailer": "^6.9.7",
+    "pdfkit": "^0.18.0",
+    "razorpay": "^2.9.6",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "react-phone-input-2": "^2.15.1",
+    "react-phone-number-input": "^3.4.14",
+    "scheduler": "0.27.0",
+=======
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^4.0.0",
     "nodemailer": "^8.0.1",
@@ -28,6 +55,7 @@
     "pdfkit": "^0.18.0",
     "razorpay": "^2.9.6",
     "textflow.js": "^0.1.4",
+>>>>>>> dc1a17c (rupee changes)
     "twilio": "^5.12.2",
     "xlsx": "^0.18.5"
   },

@@ -1,0 +1,299 @@
+const nodemailer = require('nodemailer');
+
+const DEFAULT_CONNECT_TIMEOUT_MS = Number(process.env.EMAIL_CONNECT_TIMEOUT_MS || 12000);
+const DEFAULT_SOCKET_TIMEOUT_MS = Number(process.env.EMAIL_SOCKET_TIMEOUT_MS || 20000);
+const DEFAULT_GREETING_TIMEOUT_MS = Number(process.env.EMAIL_GREETING_TIMEOUT_MS || 12000);
+const RETRY_DELAY_MS = Number(process.env.EMAIL_RETRY_DELAY_MS || 1200);
+const RETRY_ATTEMPTS = Number(process.env.EMAIL_RETRY_ATTEMPTS || 2);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const asBool = (value, fallback = false) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+};
+
+const isTimeoutError = (error) => {
+    const msg = String(error?.message || '').toLowerCase();
+    return (
+        msg.includes('timeout') ||
+        msg.includes('timed out') ||
+        msg.includes('etimedout') ||
+        msg.includes('greeting never received') ||
+        msg.includes('connection closed unexpectedly')
+    );
+};
+
+const getTransportConfigs = () => {
+    const user = (process.env.EMAIL_USER || '').trim();
+    const pass = (process.env.EMAIL_PASSWORD || '').replace(/\s+/g, '');
+    if (!user || !pass) {
+        throw new Error('EMAIL_USER or EMAIL_PASSWORD is not set in environment variables');
+    }
+
+    const smtpHost = (process.env.SMTP_HOST || '').trim();
+    const smtpPort = Number(process.env.SMTP_PORT || 0);
+    const smtpSecure = asBool(process.env.SMTP_SECURE, smtpPort === 465);
+
+    const common = {
+        auth: { user, pass },
+        connectionTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
+        socketTimeout: DEFAULT_SOCKET_TIMEOUT_MS,
+        greetingTimeout: DEFAULT_GREETING_TIMEOUT_MS,
+        pool: false,
+        tls: {
+            rejectUnauthorized: asBool(process.env.EMAIL_TLS_REJECT_UNAUTHORIZED, false)
+        }
+    };
+
+    if (smtpHost) {
+        return [{
+            ...common,
+            host: smtpHost,
+            port: smtpPort || (smtpSecure ? 465 : 587),
+            secure: smtpSecure,
+            name: 'custom-smtp'
+        }];
+    }
+
+    return [
+        {
+            ...common,
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
+            name: 'gmail-465'
+        },
+        {
+            ...common,
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false,
+            name: 'gmail-587'
+        }
+    ];
+};
+
+const createTransporter = (transportConfig) => nodemailer.createTransport(transportConfig);
+
+const sendWithFallback = async (mailOptions) => {
+    const transports = getTransportConfigs();
+    let lastError;
+
+    for (const config of transports) {
+        const transporter = createTransporter(config);
+        for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+            try {
+                await transporter.sendMail(mailOptions);
+                return true;
+            } catch (error) {
+                lastError = error;
+                const shouldRetry = isTimeoutError(error) && attempt < RETRY_ATTEMPTS;
+                if (!shouldRetry) break;
+                await sleep(RETRY_DELAY_MS * attempt);
+            }
+        }
+    }
+
+    throw lastError || new Error('Email send failed');
+};
+
+// Verify on startup (non-blocking — only logs, never crashes the server)
+setImmediate(() => {
+    try {
+        const firstTransport = getTransportConfigs()[0];
+        const t = createTransporter(firstTransport);
+        t.verify((error) => {
+            if (error) {
+                console.error('❌ Email transporter error:', error.message);
+                console.error('   Check EMAIL_USER / EMAIL_PASSWORD and SMTP settings in environment variables.');
+                if (isTimeoutError(error)) {
+                    console.error('   SMTP timeout detected. Try setting SMTP_HOST/SMTP_PORT explicitly in deployment env.');
+                }
+                console.error('   ');
+                console.error('   🔧 Setup Instructions:');
+                console.error('   1. Go to myaccount.google.com');
+                console.error('   2. Select "Security" from left menu');
+                console.error('   3. Enable "2-Step Verification" if not already enabled');
+                console.error('   4. Go back to Security, find "App passwords"');
+                console.error('   5. Select "Mail" and "Windows Computer" (or your device)');
+                console.error('   6. Copy the 16-character password (remove spaces)');
+                console.error('   7. Update EMAIL_PASSWORD in your .env or Render dashboard');
+                console.error('   ');
+                if (process.env.NODE_ENV === 'production') {
+                    console.error('   ⚠️  PRODUCTION ERROR: Email service is DOWN. Users cannot reset passwords!');
+                }
+            } else {
+                console.log('✅ Email server is ready to send emails');
+            }
+        });
+    } catch (e) {
+        console.error('❌ Email transporter setup failed:', e.message);
+        if (process.env.NODE_ENV === 'production') {
+            console.error('   ⚠️  PRODUCTION ERROR: Email setup failed!');
+        }
+    }
+});
+
+// Generate OTP (6 digit)
+const generateOTP = () => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+// Send OTP email
+const sendOTPEmail = async (email, otp, purpose) => {
+    try {
+        const subject = purpose === 'forgot-password' 
+            ? 'Password Reset OTP - EIRS Technology'
+            : 'Change Password OTP - EIRS Technology';
+
+        const htmlContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+                    <h1 style="color: white; margin: 0;">EIRS Technology</h1>
+                    <p style="color: rgba(255, 255, 255, 0.9); margin: 10px 0 0 0;">Security Solutions</p>
+                </div>
+                
+                <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e0e0e0;">
+                    <h2 style="color: #333; margin-top: 0;">Verify Your Identity</h2>
+                    
+                    <p style="color: #666; font-size: 16px; line-height: 1.6;">
+                        Hello,
+                    </p>
+                    
+                    <p style="color: #666; font-size: 16px; line-height: 1.6;">
+                        ${purpose === 'forgot-password' 
+                            ? 'You requested a password reset for your EIRS Technology account.' 
+                            : 'You requested to change your password for your EIRS Technology account.'}
+                        Use the OTP below to proceed:
+                    </p>
+                    
+                    <div style="background: white; border: 2px solid #667eea; border-radius: 10px; padding: 20px; margin: 30px 0; text-align: center;">
+                        <p style="margin: 0; color: #999; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Your OTP Code</p>
+                        <h1 style="margin: 15px 0 0 0; color: #667eea; font-size: 48px; letter-spacing: 8px; font-weight: bold;">${otp}</h1>
+                    </div>
+                    
+                    <p style="color: #666; font-size: 16px; line-height: 1.6;">
+                        <strong style="color: #333;">Important:</strong>
+                    </p>
+                    <ul style="color: #666; font-size: 15px; line-height: 1.8;">
+                        <li>This OTP is valid for 10 minutes</li>
+                        <li>Do not share this OTP with anyone</li>
+                        <li>If you did not request this, please ignore this email</li>
+                    </ul>
+                    
+                    <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <p style="margin: 0; color: #856404; font-size: 14px;">
+                            ⚠️ For security reasons, never share your OTP with anyone, including EIRS Technology staff.
+                        </p>
+                    </div>
+                    
+                    <p style="color: #999; font-size: 14px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+                        This is an automated email. Please do not reply to this message.<br>
+                        <strong>EIRS Technology</strong> | Advanced Security Solutions
+                    </p>
+                </div>
+            </div>
+        `;
+
+        const mailOptions = {
+            from: `"EIRS Technology" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: subject,
+            html: htmlContent
+        };
+
+        await sendWithFallback(mailOptions);
+        console.log(`✅ OTP sent successfully to ${email}`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error sending OTP email:', error.message);
+        const e = new Error(error.message || 'Unknown email error');
+        e.gmailError = error.message;
+        throw e;
+    }
+};
+
+// Send password reset email with link
+const sendPasswordResetEmail = async (email, resetToken, frontendUrl) => {
+    try {
+        const resetLink = `${frontendUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+
+        const htmlContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+                    <h1 style="color: white; margin: 0;">EIRS Technology</h1>
+                    <p style="color: rgba(255, 255, 255, 0.9); margin: 10px 0 0 0;">Security Solutions</p>
+                </div>
+                
+                <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e0e0e0;">
+                    <h2 style="color: #333; margin-top: 0;">Reset Your Password</h2>
+                    
+                    <p style="color: #666; font-size: 16px; line-height: 1.6;">Hello,</p>
+                    
+                    <p style="color: #666; font-size: 16px; line-height: 1.6;">
+                        We received a request to reset your password for your EIRS Technology account. 
+                        Click the button below to reset your password:
+                    </p>
+                    
+                    <div style="text-align: center; margin: 35px 0;">
+                        <a href="${resetLink}" 
+                           style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 36px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: bold; display: inline-block;">
+                            Reset My Password
+                        </a>
+                    </div>
+                    
+                    <p style="color: #666; font-size: 14px; line-height: 1.6;">
+                        Or copy and paste this link into your browser:
+                    </p>
+                    <p style="background: #e9ecef; padding: 10px; border-radius: 5px; word-break: break-all; font-size: 13px; color: #555;">
+                        ${resetLink}
+                    </p>
+                    
+                    <p style="color: #666; font-size: 16px; line-height: 1.6;">
+                        <strong style="color: #333;">Important:</strong>
+                    </p>
+                    <ul style="color: #666; font-size: 15px; line-height: 1.8;">
+                        <li>This link is valid for <strong>1 hour</strong></li>
+                        <li>If you did not request this, please ignore this email</li>
+                        <li>Your password will not change until you click the link and set a new one</li>
+                    </ul>
+                    
+                    <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <p style="margin: 0; color: #856404; font-size: 14px;">
+                            ⚠️ For security, never share this link with anyone, including EIRS Technology staff.
+                        </p>
+                    </div>
+                    
+                    <p style="color: #999; font-size: 14px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+                        This is an automated email. Please do not reply to this message.<br>
+                        <strong>EIRS Technology</strong> | Advanced Security Solutions
+                    </p>
+                </div>
+            </div>
+        `;
+
+        const mailOptions = {
+            from: `"EIRS Technology" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: 'Password Reset Link - EIRS Technology',
+            html: htmlContent
+        };
+
+        await sendWithFallback(mailOptions);
+        console.log(`✅ Password reset email sent successfully to ${email}`);
+        console.log(`Reset link: ${resetLink}`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error sending password reset email:', error.message);
+        const e = new Error(error.message || 'Unknown email error');
+        e.gmailError = error.message;
+        throw e;
+    }
+};
+
+module.exports = {
+    generateOTP,
+    sendOTPEmail,
+    sendPasswordResetEmail
+};

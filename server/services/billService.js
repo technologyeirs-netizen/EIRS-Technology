@@ -14,7 +14,7 @@ const downloadImage = async (url, filepath) => {
   });
 };
 
-const money = (n) => `₹${Number(n || 0).toFixed(2)}`;
+const money = (n) => `${Number(n || 0).toFixed(2)}`;
 
 const generateBill = async (order) => {
   return new Promise(async (resolve, reject) => {

@@ -1,0 +1,151 @@
+﻿/* ================================================================
+   BRAND CAROUSEL  —  Infinite CSS Marquee
+   bc-* class prefix
+   ================================================================ */
+
+.bc-section {
+  padding: 56px 0 52px;
+  background: #0f172a;
+  border-top: 1px solid #1e293b;
+  border-bottom: 1px solid #1e293b;
+  overflow: hidden;
+}
+
+/* ── Section label ─────────────────────────────────────────── */
+.bc-label {
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #f1f5f9;
+  margin-bottom: 36px;
+  position: relative;
+}
+
+.bc-label::before,
+.bc-label::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 160px;
+  height: 3px;
+  background: linear-gradient(to right, transparent, #475569);
+  transform: translateY(-50%);
+  border-radius: 2px;
+}
+.bc-label::before { right: calc(50% + 230px); }
+.bc-label::after  { left:  calc(50% + 230px); background: linear-gradient(to left, transparent, #475569); }
+
+/* ── Track wrapper (clips overflow + fades edges) ─────────── */
+.bc-track-wrap {
+  position: relative;
+  overflow: hidden;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Soft edge fades */
+.bc-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 120px;
+  z-index: 2;
+  pointer-events: none;
+}
+.bc-fade--left  { left:  0; background: linear-gradient(to right, #0f172a 10%, transparent); }
+.bc-fade--right { right: 0; background: linear-gradient(to left,  #0f172a 10%, transparent); }
+
+/* ── Scrolling track ───────────────────────────────────────── */
+.bc-track {
+  display: flex;
+  gap: 0;
+  width: max-content;
+  animation: bc-scroll 30s linear infinite;
+}
+
+.bc-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes bc-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ── Individual brand card ─────────────────────────────────── */
+.bc-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 160px;
+  height: 110px;
+  margin: 0 16px;
+  padding: 16px 20px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  cursor: default;
+  flex-shrink: 0;
+  transition: background 0.22s, border-color 0.22s, box-shadow 0.22s, transform 0.22s;
+}
+
+.bc-item:hover {
+  background: #fff;
+  border-color: #6366f1;
+  box-shadow: 0 6px 24px rgba(99,102,241,0.14);
+  transform: translateY(-4px);
+}
+
+.bc-item img {
+  max-width: 110px;
+  max-height: 52px;
+  object-fit: contain;
+  filter: grayscale(30%) brightness(0.92);
+  transition: filter 0.22s, transform 0.22s;
+}
+
+.bc-item:hover img {
+  filter: grayscale(0%) brightness(1);
+  transform: scale(1.06);
+}
+
+.bc-name {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #0f172a;
+  letter-spacing: 0.3px;
+  transition: color 0.22s;
+}
+
+.bc-item:hover .bc-name {
+  color: #6366f1;
+}
+
+/* ── Responsive ────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .bc-section { padding: 40px 0 36px; }
+  .bc-label { font-size: 0.66rem; letter-spacing: 1.5px; margin-bottom: 28px; }
+  .bc-label::before { right: calc(50% + 140px); }
+  .bc-label::after  { left:  calc(50% + 140px); }
+  .bc-fade { width: 48px; }
+  .bc-item { width: 130px; height: 90px; margin: 0 10px; padding: 12px 14px; }
+  .bc-item img { max-width: 88px; max-height: 42px; }
+  .bc-track { animation-duration: 22s; }
+}
+
+@media (max-width: 480px) {
+  .bc-section { padding: 32px 0 28px; }
+  .bc-fade { width: 32px; }
+  .bc-item { width: 110px; height: 78px; margin: 0 8px; }
+  .bc-item img { max-width: 76px; max-height: 36px; }
+  .bc-track { animation-duration: 18s; }
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .bc-track { animation: none; }
+}
