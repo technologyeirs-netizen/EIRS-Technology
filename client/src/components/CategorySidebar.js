@@ -45,25 +45,28 @@ const CategorySidebar = ({
       const subcategories = Array.isArray(subRes.data)
         ? subRes.data
         : subRes.data.data || [];
+        console.log("All Subcategories:", subcategories);
 
-      const formatted = categories.map((cat) => ({
-        id: cat._id,
-        name: cat.name,
-        subcategories: subcategories
-          .filter(
-            (sub) =>
-              String(
-                typeof sub.category === "object"
-                  ? sub.category?._id
-                  : sub.category,
-              ) === String(cat._id),
-          )
-          .map((sub) => ({
-            name: sub.name,
-            actualSubcategory: sub.name,
-            redirect: true,
-          })),
-      }));
+     const formatted = categories.map((cat) => ({
+  id: cat._id,
+  name: cat.name,
+  subcategories: subcategories
+    .filter(
+      (sub) =>
+        String(
+          typeof sub.category === "object"
+            ? sub.category?._id
+            : sub.category,
+        ) === String(cat._id),
+    )
+    .map((sub) => ({
+      name: sub.name,
+      actualSubcategory: sub.name,
+      redirect: true,
+    })),
+}));
+
+console.log("Formatted:", formatted);
 
       console.log("FORMATTED SIDEBAR:", formatted);
 
@@ -75,7 +78,7 @@ const CategorySidebar = ({
   };
 
   const handleCategoryClick = (categoryName) => {
-    console.log("🔗 Navigating to category:", categoryName);
+   // console.log("🔗 Navigating to category:", categoryName);
     navigate(
       `/products?category=${encodeURIComponent(categoryName)}&fromSidebar=true`,
     );

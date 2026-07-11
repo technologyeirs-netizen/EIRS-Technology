@@ -6,8 +6,7 @@ import { getApiBaseUrl } from './apiBaseUrl';
 // For development: use localhost backend
 const API_BASE_URL = getApiBaseUrl();
 
-console.log('🔗 API_BASE_URL:', API_BASE_URL);
-console.log('Environment:', process.env.NODE_ENV);
+
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -24,12 +23,12 @@ api.interceptors.request.use(
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
-      console.log('Token added to request:', config.method.toUpperCase(), config.url);
+    
     }
     return config;
   },
   (error) => {
-    console.error('Request interceptor error:', error);
+
     return Promise.reject(error);
   }
 );
@@ -37,13 +36,13 @@ api.interceptors.request.use(
 // Response interceptor to handle errors
 api.interceptors.response.use(
   (response) => {
-    console.log('API Response successful:', response.status, response.config.url);
+   
     return response;
   },
   async (error) => {
     const config = error.config;
     
-    console.error('API Response error:', error.response?.status, error.message, error.config?.url);
+   
     
     // Retry logic for network errors (max 2 retries)
     if (!config || !config.retry) {
@@ -58,7 +57,7 @@ api.interceptors.response.use(
        (error.response && error.response.status >= 500))
     ) {
       config.retry += 1;
-      console.log(`🔄 Retrying request (${config.retry}/2)...`);
+     
       
       // Wait before retry (exponential backoff)
       await new Promise(resolve => setTimeout(resolve, 1000 * config.retry));
@@ -80,15 +79,12 @@ api.interceptors.response.use(
 export const authService = {
   signup: async (formData) => {
     try {
-      console.log('Signup request to:', API_BASE_URL + '/auth/signup');
-      console.log('Form data:', formData);
+      
       const response = await api.post('/auth/signup', formData);
-      console.log('Signup response:', response.data);
+
       return response.data;
     } catch (error) {
-      console.error('Signup network error:', error);
-      console.error('Error response:', error.response?.data);
-      console.error('Error status:', error.response?.status);
+     
       const errorMessage = error.response?.data?.message || error.message || 'Signup failed';
       const err = new Error(errorMessage);
       err.status = error.response?.status;
@@ -98,9 +94,9 @@ export const authService = {
 
   signin: async (credentials) => {
     try {
-      console.log('Signin request to:', API_BASE_URL + '/auth/signin');
+      
       const response = await api.post('/auth/signin', credentials);
-      console.log('Signin response:', response.data);
+
       if (response.data.token) {
         // Store token in localStorage
         localStorage.setItem('token', response.data.token);
@@ -109,8 +105,7 @@ export const authService = {
       }
       return response.data;
     } catch (error) {
-      console.error('Signin network error:', error);
-      console.error('Error response:', error.response?.data);
+      
       const errorMessage = error.response?.data?.message || error.message || 'Sign in failed';
       const err = new Error(errorMessage);
       err.status = error.response?.status;
@@ -273,14 +268,15 @@ export const productService = {
         const parsed = JSON.parse(cached);
         const firstProduct = Array.isArray(parsed) ? parsed[0] : (parsed?.data?.[0]);
         if (firstProduct && !('discount' in firstProduct)) {
-          console.log('🔄 Cache busted — discount field missing, fetching fresh data');
+          
         } else {
-          console.log('✅ Using cached products (client-side)');
+        
           return parsed;
         }
       }
       
-      console.log('🔄 Fetching products from server...');
+   
+
       // Append a cache-buster when forcing fresh data so the browser's HTTP cache
       // does not return a stale response (browser caches by URL).
       const bustParam = (skipCache || isDirty) ? `&_t=${Date.now()}` : '';
@@ -300,18 +296,18 @@ export const productService = {
         }
       } catch (storageError) {
         // Handle quota exceeded
-        console.warn('LocalStorage quota exceeded, clearing old cache');
+        
         localStorage.removeItem(`products_cache_${page}_${limit}`);
         localStorage.removeItem(`products_cache_${page}_${limit}_time`);
       }
       
       return response.data;
     } catch (error) {
-      console.error('Error fetching products:', error);
+      
       
       // Return cached data even if expired when network fails
       if (cached) {
-        console.log('⚠️ Using stale cache due to network error');
+       
         return JSON.parse(cached);
       }
       
@@ -333,9 +329,9 @@ export const productService = {
       keysToRemove.forEach(k => localStorage.removeItem(k));
       // Mark dirty so every page bypasses client cache on the very next fetch
       localStorage.setItem('products_dirty', 'true');
-      console.log('✅ All product caches cleared and marked dirty');
+     
     } catch (error) {
-      console.error('Error clearing cache:', error);
+     
     }
   },
 
@@ -415,7 +411,7 @@ export const productService = {
       // Filter products by category on the client side
       return allProducts.filter(product => product.category === category || product.mainCategory === category);
     } catch (error) {
-      console.error('Error in getProductsByCategory:', error);
+      
       throw error.response?.data || error.message;
     }
   },
@@ -776,65 +772,60 @@ export const orderService = {
 export const reviewService = {
   addReview: async (reviewData) => {
     try {
-      console.log('🚀 API Call: POST /auth/reviews/add');
-      console.log('Data:', reviewData);
+    
       const response = await api.post('/auth/reviews/add', reviewData);
-      console.log('✅ Response:', response.data);
+     
       return response.data;
     } catch (error) {
-      console.error('❌ API Error in addReview:');
-      console.error('Status:', error.response?.status);
-      console.error('Data:', error.response?.data);
-      console.error('Message:', error.message);
+      
       throw error.response?.data || error;
     }
   },
 
   getProductReviews: async (productId) => {
     try {
-      console.log('🚀 API Call: GET /auth/reviews/product/:' + productId);
+    
       const response = await api.get(`/auth/reviews/product/${productId}`);
-      console.log('✅ Response:', response.data);
+     
       return response.data;
     } catch (error) {
-      console.error('❌ API Error in getProductReviews:', error.message);
+     
       throw error.response?.data || error;
     }
   },
 
   getUserProductReview: async (productId) => {
     try {
-      console.log('🚀 API Call: GET /auth/reviews/product/:' + productId + '/user');
+      
       const response = await api.get(`/auth/reviews/product/${productId}/user`);
-      console.log('✅ Response:', response.data);
+     
       return response.data;
     } catch (error) {
-      console.error('❌ API Error in getUserProductReview:', error.message);
+      
       throw error.response?.data || error;
     }
   },
 
   updateReview: async (reviewId, reviewData) => {
     try {
-      console.log('🚀 API Call: PUT /auth/reviews/:' + reviewId);
-      console.log('Data:', reviewData);
+      
       const response = await api.put(`/auth/reviews/${reviewId}`, reviewData);
-      console.log('✅ Response:', response.data);
+    
       return response.data;
     } catch (error) {
-      console.error('❌ API Error in updateReview:', error.message);
+      
       throw error.response?.data || error;
     }
   },
 
   deleteReview: async (reviewId) => {
     try {
-      console.log('🚀 API Call: DELETE /auth/reviews/:' + reviewId);
+      
       const response = await api.delete(`/auth/reviews/${reviewId}`);
-      console.log('✅ Response:', response.data);
+     
       return response.data;
     } catch (error) {
-      console.error('❌ API Error in deleteReview:', error.message);
+     
       throw error.response?.data || error;
     }
   },

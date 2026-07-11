@@ -808,10 +808,16 @@
 @media (max-width: 992px) {
   .header-container {
     gap: 12px;
+    display: flex;
+    flex-wrap: wrap;
   }
 
   .search-bar-main {
-    display: none;
+    display: flex;
+    order: 3;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 10px;
   }
 
   .hamburger-menu-left {
@@ -839,6 +845,8 @@
     padding: 10px 12px;
     min-height: 50px;
   }
+
+  
 
   .header-left-section {
     gap: 10px;

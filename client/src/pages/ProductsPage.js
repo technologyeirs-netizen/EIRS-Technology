@@ -102,19 +102,16 @@ const ProductsPage = () => {
   }, []);
 
   const fetchProductsFresh = useCallback(async () => {
-  try {
-    const data = await productService.getProductsFresh(1, 50);
+    try {
+      const data = await productService.getProductsFresh(1, 50);
 
-    const arr = Array.isArray(data)
-      ? data
-      : data.data || [];
+      const arr = Array.isArray(data) ? data : data.data || [];
 
-    setProducts(arr);
-
-  } catch (err) {
-    console.error("Fresh products fetch error:", err);
-  }
-}, []);
+      setProducts(arr);
+    } catch (err) {
+     
+    }
+  }, []);
 
   const fetchCategoriesAndSubcategories = useCallback(async () => {
     try {
@@ -134,7 +131,7 @@ const ProductsPage = () => {
       setCategories(catData);
       setSubcategoriesData(subData);
     } catch (err) {
-      console.error("Category fetch error:", err);
+      
     }
   }, [API_BASE]);
 
@@ -202,23 +199,31 @@ const ProductsPage = () => {
         result = result.filter(
           (p) => p.category && selectedSidebarCategories.has(p.category),
         );
-      if (selectedCategory) {
+     if (selectedCategory) {
   result = result.filter((p) => {
     if (!p.category) return false;
 
     if (typeof p.category === "object") {
-      return p.category._id === selectedCategory;
+      return (
+        p.category.name?.trim().toLowerCase() ===
+        selectedCategory.trim().toLowerCase()
+      );
     }
 
-    return p.category === selectedCategory;
+    return (
+      String(p.category).trim().toLowerCase() ===
+      selectedCategory.trim().toLowerCase()
+    );
   });
 }
-      if (selectedSubcategory)
-        result = result.filter(
-          (p) =>
-            p.subcategory &&
-            p.subcategory.trim() === selectedSubcategory.trim(),
-        );
+      if (selectedSubcategory) {
+  result = result.filter(
+    (p) =>
+      p.subcategory &&
+      p.subcategory.trim().toLowerCase() ===
+        selectedSubcategory.trim().toLowerCase()
+  );
+}
       if (selectedSubmenu)
         result = result.filter(
           (p) => p.submenu && p.submenu.trim() === selectedSubmenu.trim(),
@@ -234,7 +239,13 @@ const ProductsPage = () => {
             (p.productName && p.productName.toLowerCase().includes(q)) ||
             (p.description && p.description.toLowerCase().includes(q)) ||
             (p.brand && p.brand.toLowerCase().includes(q)) ||
-            (p.category && p.category.toLowerCase().includes(q)),
+            (
+  (typeof p.category === "object"
+    ? p.category?.name
+    : p.category || "")
+    .toLowerCase()
+    .includes(q)
+)
         );
       }
       if (minPrice || maxPrice) {
@@ -295,6 +306,7 @@ const ProductsPage = () => {
 
   useEffect(() => {
     filterProducts();
+   
   }, [filterProducts]);
 
   const uniqueBrands = useMemo(
@@ -377,18 +389,18 @@ const ProductsPage = () => {
   const activeChips = useMemo(() => {
     const chips = [];
     if (selectedCategory) {
-  const catName =
-    categories.find((c) => c._id === selectedCategory)?.name ||
-    selectedCategory;
+      const catName =
+        categories.find((c) => c._id === selectedCategory)?.name ||
+        selectedCategory;
 
-  chips.push({
-    label: catName,
-    clear: () => {
-      setSelectedCategory("");
-      setSelectedSubcategory("");
-    },
-  });
-}
+      chips.push({
+        label: catName,
+        clear: () => {
+          setSelectedCategory("");
+          setSelectedSubcategory("");
+        },
+      });
+    }
     if (selectedSubcategory)
       chips.push({
         label: selectedSubcategory,
@@ -476,16 +488,17 @@ const ProductsPage = () => {
 
               {/* Category */}
               <div className="pp-dropdown-wrap" onClick={stopPropagation}>
-               <button
-  className={`pp-filter-btn ${selectedCategory ? "pp-filter-btn--active" : ""}`}
-  onClick={() => toggleDropdown("category")}
->
-  <FaTag />{" "}
-  {categories.find(c => c._id === selectedCategory)?.name || "Category"}
-  <FaChevronDown
-    className={`pp-chevron ${openDropdown === "category" ? "pp-chevron--open" : ""}`}
-  />
-</button>
+                <button
+                  className={`pp-filter-btn ${selectedCategory ? "pp-filter-btn--active" : ""}`}
+                  onClick={() => toggleDropdown("category")}
+                >
+                  <FaTag />{" "}
+                  {categories.find((c) => c._id === selectedCategory)?.name ||
+                    "Category"}
+                  <FaChevronDown
+                    className={`pp-chevron ${openDropdown === "category" ? "pp-chevron--open" : ""}`}
+                  />
+                </button>
                 {openDropdown === "category" && (
                   <div className="pp-dropdown-menu">
                     <div

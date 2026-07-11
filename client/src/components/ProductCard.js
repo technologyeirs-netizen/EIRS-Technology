@@ -113,27 +113,44 @@ const ProductCard = ({ product }) => {
     }
   };
 
-  const handleAddToCart = useCallback(() => {
-    if (!isLoggedIn) {
-      navigate('/signin');
-      return;
-    }
-    if (productId && !isOutOfStock) {
-      addToCart({
-        _id: productId,
-        productName: displayName,
-        price: sellingPrice,
-        image: image,
-        quantity: 1,
-        stock: stockQuantity,
-        brand: brand,
-          discount: product.discount || 0,
-  hsn: product.hsn || "",
-  modelNo: product.modelNo || ""
-      });
-      alert('Product added to cart!');
-    }
-  }, [isLoggedIn, productId, isOutOfStock, displayName, sellingPrice, image, stockQuantity, brand, navigate, addToCart]);
+const handleAddToCart = useCallback(() => {
+  if (!isLoggedIn) {
+    navigate('/signin');
+    return;
+  }
+
+  if (productId && !isOutOfStock) {
+    addToCart({
+      _id: productId,
+      productName: displayName,
+      price: sellingPrice,
+      image: image,
+      quantity: 1,
+      stock: stockQuantity,
+      brand: brand,
+      discount: product.discount || 0,
+      hsn: product.hsn || "",
+      modelNo: product.modelNo || ""
+    });
+
+    // Redirect to Cart Page
+    navigate('/cart');
+  }
+}, [
+  isLoggedIn,
+  productId,
+  isOutOfStock,
+  displayName,
+  sellingPrice,
+  image,
+  stockQuantity,
+  brand,
+  navigate,
+  addToCart,
+  product.discount,
+  product.hsn,
+  product.modelNo
+]);
 
   const handleViewDetails = useCallback(() => {
     if (productId) {
@@ -155,7 +172,7 @@ const ProductCard = ({ product }) => {
       setIsWishlisted(true);
     }
   };
-  console.log(product);
+ 
 
   return (
     <div className="product-card">
@@ -213,9 +230,10 @@ const ProductCard = ({ product }) => {
               <button className="buy-now-btn" onClick={handleBuyNow}>
                 Buy Now
               </button>
-              <button className="add-to-cart-btn" onClick={handleAddToCart}>
-                <FaShoppingCart /> Add To Cart
-              </button>
+            <button className="add-to-cart-btn" onClick={handleAddToCart}>
+  <FaShoppingCart />
+  <span>Add to Cart</span>
+</button>
             </>
           ) : (
             <button className="add-to-cart-btn" disabled>
