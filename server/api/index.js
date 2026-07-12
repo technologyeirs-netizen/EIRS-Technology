@@ -73,7 +73,7 @@ const ensureAdminExists = async () => {
 
 // CORS configuration
 const corsOptions = {
-    origin: ['http://localhost:3001', 'http://localhost:3000', 'http://192.168.0.147:3001', 'https://eirs-technology2-git-main-riju-sarkars-projects.vercel.app', 'https://*.vercel.app'],
+    origin: ['http://localhost:3001', 'http://localhost:3000','https://www.eirstechnology.com','https://eirstechnology.com','https://crm.eirstechnology.com', 'http://192.168.0.147:3001', 'https://eirs-technology2-git-main-riju-sarkars-projects.vercel.app', 'https://*.vercel.app'],
     credentials: true,
     optionsSuccessStatus: 200,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
