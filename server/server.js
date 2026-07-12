@@ -92,17 +92,15 @@ const envOrigins = [
 const corsOptions = {
     origin: function (origin, callback) {
         const allowedOrigins = [
-            'http://localhost:3000',
-            'http://localhost:3001',
-            'http://localhost:3002',
-            'http://192.168.0.147:3000',
-            'http://192.168.0.147:3001',
-            'https://eirs-technology.vercel.app',
-            'https://www.eirstechnology.com',
-            "https://eirstechnology.com",
-            "https://crm.eirstechnology.com",
-           
-            ...envOrigins
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'http://localhost:3002',
+          'http://192.168.0.147:3000',
+          'http://192.168.0.147:3001',
+          'https://www.eirstechnology.com',
+          'https://eirstechnology.com',
+          'https://crm.eirstechnology.com',
+          ...envOrigins,
         ];
 
         // Check if origin matches allowed list or regex patterns
