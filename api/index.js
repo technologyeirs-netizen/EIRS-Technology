@@ -79,7 +79,6 @@ const corsOptions = {
           "https://www.eirstechnology.com",
           "https://eirstechnology.com",
           "https://crm.eirstechnology.com",
-          ...envOrigins,
         ];
         
         // Check if origin matches allowed list
