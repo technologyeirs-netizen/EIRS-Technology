@@ -57,18 +57,21 @@ exports.getAllProducts = async (req, res) => {
     const now = Date.now();
 
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const skip = (page - 1) * limit;
+    const requestedLimit = parseInt(req.query.limit, 10);
+    const wantsAll = req.query.limit === "all" || req.query.all === "true" || (Number.isFinite(requestedLimit) && requestedLimit >= 1000);
+    const limit = wantsAll ? 0 : (Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 50);
+    const skip = wantsAll ? 0 : (page - 1) * limit;
+    const shouldBypassCache = req.query.refresh === "true" || req.query._t || req.query.bust === "true";
 
-    console.log("📦 PAGE:", page, "LIMIT:", limit, "SKIP:", skip);
+    console.log("📦 PAGE:", page, "LIMIT:", limit, "SKIP:", skip, "WANTS_ALL:", wantsAll, "BYPASS_CACHE:", shouldBypassCache);
 
-    const cacheKey = `${page}_${limit}`;
+    const cacheKey = `${page}_${wantsAll ? "all" : limit}`;
 
     // =========================
     // CACHE CHECK
     // =========================
     const cachedPage = productsCache.get(cacheKey);
-    if (cachedPage && (now - cachedPage.timestamp) < CACHE_DURATION) {
+    if (!shouldBypassCache && cachedPage && (now - cachedPage.timestamp) < CACHE_DURATION) {
       console.log(`✅ CACHE HIT for page ${page}`);
       res.set("Cache-Control", "public, max-age=300");
       res.set("X-Cache", "HIT");
@@ -115,14 +118,17 @@ exports.getAllProducts = async (req, res) => {
     // =========================
     // DB QUERY
     // =========================
-    const products = await Product.find(filter)
+    const query = Product.find(filter)
       .populate("category", "name")
       .select("_id productName category subcategory submenu channels brand price image stock modelNo hsn isFeatured discount")
       .lean()
-      .limit(limit)
-      .skip(skip)
-      .sort({ createdAt: -1 })
-      .exec();
+      .sort({ createdAt: -1 });
+
+    if (!wantsAll && limit > 0) {
+      query.limit(limit).skip(skip);
+    }
+
+    const products = await query.exec();
 
     console.log("📦 PRODUCTS FOUND:", products.length);
 
@@ -131,8 +137,8 @@ exports.getAllProducts = async (req, res) => {
       pagination: {
         total,
         page,
-        limit,
-        pages: Math.ceil(total / limit),
+        limit: wantsAll ? products.length : limit,
+        pages: wantsAll ? 1 : Math.ceil(total / limit),
       },
     };
 

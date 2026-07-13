@@ -256,30 +256,27 @@ export const authService = {
 
 // Products Services
 export const productService = {
-  getAllProducts: async (page = 1, limit = 50, skipCache = false) => {
+  getAllProducts: async (page = 1, limit = 1000, skipCache = false) => {
     const cacheKey = `products_cache_${page}_${limit}`;
     const cached = localStorage.getItem(cacheKey);
     const cacheTime = localStorage.getItem(cacheKey + '_time');
     const isDirty = localStorage.getItem('products_dirty') === 'true';
-    
+    const shouldBypassCache = skipCache || isDirty || limit >= 1000;
+
     try {
-      // Use cache only if fresh, not forced-skip, and not marked dirty by a recent admin update
-      if (!skipCache && !isDirty && cached && cacheTime && (Date.now() - parseInt(cacheTime)) < 5 * 60 * 1000) {
+      // Use cache only for small non-public requests and only when not marked dirty.
+      if (!shouldBypassCache && cached && cacheTime && (Date.now() - parseInt(cacheTime)) < 5 * 60 * 1000) {
         const parsed = JSON.parse(cached);
         const firstProduct = Array.isArray(parsed) ? parsed[0] : (parsed?.data?.[0]);
         if (firstProduct && !('discount' in firstProduct)) {
           
         } else {
-        
           return parsed;
         }
       }
-      
-   
 
-      // Append a cache-buster when forcing fresh data so the browser's HTTP cache
-      // does not return a stale response (browser caches by URL).
-      const bustParam = (skipCache || isDirty) ? `&_t=${Date.now()}` : '';
+      // Append a cache-buster so the browser and API do not serve stale catalog data.
+      const bustParam = shouldBypassCache ? `&_t=${Date.now()}` : '';
       const response = await api.get(`/auth/products?page=${page}&limit=${limit}${bustParam}`, {
         // Products endpoint may take longer on slow servers, especially first load
         timeout: 45000, // 45 seconds (increased from 15 to handle slow servers/first load)
@@ -336,7 +333,7 @@ export const productService = {
   },
 
   // Fetch products with fresh data (bypasses cache)
-  getProductsFresh: async (page = 1, limit = 50) => {
+  getProductsFresh: async (page = 1, limit = 1000) => {
     return productService.getAllProducts(page, limit, true);
   },
 
@@ -405,13 +402,19 @@ export const productService = {
 
   getProductsByCategory: async (category) => {
     try {
-      const response = await api.get('/auth/products');
-      // Handle both direct array and nested data structure
-      let allProducts = Array.isArray(response.data) ? response.data : (response.data.data || response.data || []);
-      // Filter products by category on the client side
-      return allProducts.filter(product => product.category === category || product.mainCategory === category);
+      const response = await productService.getAllProducts(1, 1000, true);
+      const payload = response?.data ?? response;
+      const allProducts = Array.isArray(payload)
+        ? payload
+        : (payload?.data || payload?.products || []);
+
+      return allProducts.filter((product) => {
+        const productCategory = typeof product.category === 'object'
+          ? product.category?.name
+          : product.category;
+        return productCategory === category || product.mainCategory === category;
+      });
     } catch (error) {
-      
       throw error.response?.data || error.message;
     }
   },

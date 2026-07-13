@@ -154,7 +154,7 @@ const handleAddToCart = useCallback(() => {
 
   const handleViewDetails = useCallback(() => {
     if (productId) {
-      navigate(`/product/${productId}`);
+      navigate(`/products/${productId}`);
     }
   }, [productId, navigate]);
 

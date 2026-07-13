@@ -79,7 +79,7 @@ const ProductsPage = () => {
 
   const fetchProducts = useCallback(async () => {
     try {
-      const data = await productService.getAllProducts(1, 50);
+      const data = await productService.getAllProducts(1, 1000, true);
       const arr = Array.isArray(data) ? data : data.data || [];
 
       // If cache/network race returns an empty list, force one fresh fetch
@@ -103,7 +103,7 @@ const ProductsPage = () => {
 
   const fetchProductsFresh = useCallback(async () => {
     try {
-      const data = await productService.getProductsFresh(1, 50);
+      const data = await productService.getProductsFresh(1, 1000);
 
       const arr = Array.isArray(data) ? data : data.data || [];
 
@@ -171,8 +171,18 @@ const ProductsPage = () => {
     setSearchTerm(searchQuery ? decodeURIComponent(searchQuery) : "");
 
     const categoryFromUrl = searchParams.get("category");
-    if (categoryFromUrl) {
-      setSelectedCategory(decodeURIComponent(categoryFromUrl));
+    const categoryIdFromUrl = searchParams.get("categoryId");
+    if (categoryFromUrl || categoryIdFromUrl) {
+      const requestedCategory = categoryFromUrl
+        ? decodeURIComponent(categoryFromUrl)
+        : "";
+      const matchedCategory = categories.find(
+        (cat) =>
+          cat._id === categoryIdFromUrl ||
+          cat.name?.trim().toLowerCase() === requestedCategory.trim().toLowerCase(),
+      );
+
+      setSelectedCategory(matchedCategory?._id || requestedCategory || "");
       const subcategoryFromUrl = searchParams.get("subcategory");
       setSelectedSubcategory(
         subcategoryFromUrl ? decodeURIComponent(subcategoryFromUrl) : "",
@@ -190,7 +200,7 @@ const ProductsPage = () => {
       setSelectedSubcategory("");
       setSelectedSubmenu("");
     }
-  }, [searchParams]);
+  }, [searchParams, categories]);
 
   const filterProducts = useCallback(() => {
     try {
@@ -199,23 +209,22 @@ const ProductsPage = () => {
         result = result.filter(
           (p) => p.category && selectedSidebarCategories.has(p.category),
         );
-     if (selectedCategory) {
-  result = result.filter((p) => {
-    if (!p.category) return false;
+      if (selectedCategory) {
+        const normalizedSelectedCategory = selectedCategory.trim().toLowerCase();
+        result = result.filter((p) => {
+          if (!p.category) return false;
 
-    if (typeof p.category === "object") {
-      return (
-        p.category.name?.trim().toLowerCase() ===
-        selectedCategory.trim().toLowerCase()
-      );
-    }
+          const productCategoryName =
+            (typeof p.category === "object" ? p.category?.name : p.category) || "";
+          const productCategoryId =
+            (typeof p.category === "object" ? p.category?._id : p.category) || "";
 
-    return (
-      String(p.category).trim().toLowerCase() ===
-      selectedCategory.trim().toLowerCase()
-    );
-  });
-}
+          return (
+            productCategoryName.trim().toLowerCase() === normalizedSelectedCategory ||
+            String(productCategoryId).trim().toLowerCase() === normalizedSelectedCategory
+          );
+        });
+      }
       if (selectedSubcategory) {
   result = result.filter(
     (p) =>
