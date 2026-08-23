@@ -11,6 +11,7 @@ const locationRouter = require('./router/locationRouter.js');
 const websiteSyncRouter = require('./router/websiteSyncRouter.js');
 const clientRouter = require('./router/clientRouter.js');
 const crmOpsRouter = require('./router/crmOpsRouter.js');
+const bannerRouter = require('./router/bannerRouter.js');
 const databaseconnect = require('./config/databaseConfig.js');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
@@ -172,6 +173,9 @@ app.use('/api', crmOpsRouter);
 
 // Geospatial location routes – POST /api/location, GET /api/location/nearby
 app.use('/api', locationRouter);
+
+// App-only banner/carousel routes (public GET for the app, admin CRUD for CRM)
+app.use('/api/app/banners', bannerRouter);
 app.use('/invoices', express.static(path.join(__dirname, 'invoices')));
 app.use(cookieParser());
 

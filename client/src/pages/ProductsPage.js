@@ -44,7 +44,11 @@ const ProductsPage = () => {
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    const saved = sessionStorage.getItem("pp_currentPage");
+    const savedPage = saved ? parseInt(saved, 10) : 1;
+    return Number.isInteger(savedPage) && savedPage > 0 ? savedPage : 1;
+  });
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(() => {
@@ -286,7 +290,6 @@ const ProductsPage = () => {
         }
       }
       setFilteredProducts(result);
-      setCurrentPage(1);
     } catch {
       setFilteredProducts(products);
     }
@@ -308,6 +311,47 @@ const ProductsPage = () => {
     filterProducts();
    
   }, [filterProducts]);
+
+  // Reset to page 1 only when the user actually changes a filter/search/sort.
+  // Compare by *content* (not object reference) — some effects recreate the
+  // selectedSidebarCategories Set with a new reference on mount even when its
+  // contents haven't changed, which would otherwise cause a false reset.
+  const filterFingerprint = JSON.stringify({
+    searchTerm,
+    selectedCategory,
+    selectedSubcategory,
+    selectedSubmenu,
+    selectedBrand,
+    sidebar: Array.from(selectedSidebarCategories).sort(),
+    minPrice,
+    maxPrice,
+    sortBy,
+  });
+  const prevFilterFingerprintRef = React.useRef(null);
+  useEffect(() => {
+    if (prevFilterFingerprintRef.current === null) {
+      // First run after mount: don't reset, just record the baseline so a
+      // restored page (from sessionStorage) survives coming back via back button.
+      prevFilterFingerprintRef.current = filterFingerprint;
+      return;
+    }
+    if (prevFilterFingerprintRef.current !== filterFingerprint) {
+      prevFilterFingerprintRef.current = filterFingerprint;
+      setCurrentPage(1);
+    }
+  }, [filterFingerprint]);
+
+  // Persist the current page so it survives navigating away (e.g. opening a
+  // product) and coming back.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("pp_currentPage", String(currentPage));
+    } catch {
+      // ignore storage errors (e.g. private browsing)
+    }
+  }, [currentPage]);
+
+
 
   const uniqueBrands = useMemo(
     () => [...new Set(products.map((p) => p.brand).filter(Boolean))],
@@ -331,6 +375,15 @@ const ProductsPage = () => {
     });
   }, [selectedCategory, categories, subcategoriesData]);
   const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
+
+  // Clamp the restored/current page if it no longer exists (e.g. fewer
+  // results than before).
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [totalPages, currentPage]);
+
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedProducts = useMemo(
     () => filteredProducts.slice(startIndex, startIndex + ITEMS_PER_PAGE),
