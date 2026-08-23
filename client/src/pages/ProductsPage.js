@@ -44,7 +44,11 @@ const ProductsPage = () => {
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    const saved = sessionStorage.getItem("pp_currentPage");
+    const savedPage = saved ? parseInt(saved, 10) : 1;
+    return Number.isInteger(savedPage) && savedPage > 0 ? savedPage : 1;
+  });
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(() => {
@@ -79,7 +83,7 @@ const ProductsPage = () => {
 
   const fetchProducts = useCallback(async () => {
     try {
-      const data = await productService.getAllProducts(1, 1000, true);
+      const data = await productService.getAllProducts(1, 50);
       const arr = Array.isArray(data) ? data : data.data || [];
 
       // If cache/network race returns an empty list, force one fresh fetch
@@ -103,7 +107,7 @@ const ProductsPage = () => {
 
   const fetchProductsFresh = useCallback(async () => {
     try {
-      const data = await productService.getProductsFresh(1, 1000);
+      const data = await productService.getProductsFresh(1, 50);
 
       const arr = Array.isArray(data) ? data : data.data || [];
 
@@ -171,18 +175,8 @@ const ProductsPage = () => {
     setSearchTerm(searchQuery ? decodeURIComponent(searchQuery) : "");
 
     const categoryFromUrl = searchParams.get("category");
-    const categoryIdFromUrl = searchParams.get("categoryId");
-    if (categoryFromUrl || categoryIdFromUrl) {
-      const requestedCategory = categoryFromUrl
-        ? decodeURIComponent(categoryFromUrl)
-        : "";
-      const matchedCategory = categories.find(
-        (cat) =>
-          cat._id === categoryIdFromUrl ||
-          cat.name?.trim().toLowerCase() === requestedCategory.trim().toLowerCase(),
-      );
-
-      setSelectedCategory(matchedCategory?._id || requestedCategory || "");
+    if (categoryFromUrl) {
+      setSelectedCategory(decodeURIComponent(categoryFromUrl));
       const subcategoryFromUrl = searchParams.get("subcategory");
       setSelectedSubcategory(
         subcategoryFromUrl ? decodeURIComponent(subcategoryFromUrl) : "",
@@ -200,7 +194,7 @@ const ProductsPage = () => {
       setSelectedSubcategory("");
       setSelectedSubmenu("");
     }
-  }, [searchParams, categories]);
+  }, [searchParams]);
 
   const filterProducts = useCallback(() => {
     try {
@@ -209,22 +203,23 @@ const ProductsPage = () => {
         result = result.filter(
           (p) => p.category && selectedSidebarCategories.has(p.category),
         );
-      if (selectedCategory) {
-        const normalizedSelectedCategory = selectedCategory.trim().toLowerCase();
-        result = result.filter((p) => {
-          if (!p.category) return false;
+     if (selectedCategory) {
+  result = result.filter((p) => {
+    if (!p.category) return false;
 
-          const productCategoryName =
-            (typeof p.category === "object" ? p.category?.name : p.category) || "";
-          const productCategoryId =
-            (typeof p.category === "object" ? p.category?._id : p.category) || "";
+    if (typeof p.category === "object") {
+      return (
+        p.category.name?.trim().toLowerCase() ===
+        selectedCategory.trim().toLowerCase()
+      );
+    }
 
-          return (
-            productCategoryName.trim().toLowerCase() === normalizedSelectedCategory ||
-            String(productCategoryId).trim().toLowerCase() === normalizedSelectedCategory
-          );
-        });
-      }
+    return (
+      String(p.category).trim().toLowerCase() ===
+      selectedCategory.trim().toLowerCase()
+    );
+  });
+}
       if (selectedSubcategory) {
   result = result.filter(
     (p) =>
@@ -295,7 +290,6 @@ const ProductsPage = () => {
         }
       }
       setFilteredProducts(result);
-      setCurrentPage(1);
     } catch {
       setFilteredProducts(products);
     }
@@ -317,6 +311,47 @@ const ProductsPage = () => {
     filterProducts();
    
   }, [filterProducts]);
+
+  // Reset to page 1 only when the user actually changes a filter/search/sort.
+  // Compare by *content* (not object reference) — some effects recreate the
+  // selectedSidebarCategories Set with a new reference on mount even when its
+  // contents haven't changed, which would otherwise cause a false reset.
+  const filterFingerprint = JSON.stringify({
+    searchTerm,
+    selectedCategory,
+    selectedSubcategory,
+    selectedSubmenu,
+    selectedBrand,
+    sidebar: Array.from(selectedSidebarCategories).sort(),
+    minPrice,
+    maxPrice,
+    sortBy,
+  });
+  const prevFilterFingerprintRef = React.useRef(null);
+  useEffect(() => {
+    if (prevFilterFingerprintRef.current === null) {
+      // First run after mount: don't reset, just record the baseline so a
+      // restored page (from sessionStorage) survives coming back via back button.
+      prevFilterFingerprintRef.current = filterFingerprint;
+      return;
+    }
+    if (prevFilterFingerprintRef.current !== filterFingerprint) {
+      prevFilterFingerprintRef.current = filterFingerprint;
+      setCurrentPage(1);
+    }
+  }, [filterFingerprint]);
+
+  // Persist the current page so it survives navigating away (e.g. opening a
+  // product) and coming back.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("pp_currentPage", String(currentPage));
+    } catch {
+      // ignore storage errors (e.g. private browsing)
+    }
+  }, [currentPage]);
+
+
 
   const uniqueBrands = useMemo(
     () => [...new Set(products.map((p) => p.brand).filter(Boolean))],
@@ -340,6 +375,15 @@ const ProductsPage = () => {
     });
   }, [selectedCategory, categories, subcategoriesData]);
   const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
+
+  // Clamp the restored/current page if it no longer exists (e.g. fewer
+  // results than before).
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [totalPages, currentPage]);
+
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedProducts = useMemo(
     () => filteredProducts.slice(startIndex, startIndex + ITEMS_PER_PAGE),

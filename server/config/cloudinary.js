@@ -33,4 +33,28 @@ const upload = multer({
     },
 });
 
-module.exports = { cloudinary, upload };
+// Separate storage/upload for app banners & carousel images (own Cloudinary folder)
+const bannerStorage = new CloudinaryStorage({
+    cloudinary,
+    params: {
+        folder: 'eirs-app-banners',
+        allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+        transformation: [
+            { width: 1600, height: 900, crop: 'limit', quality: 'auto:good' }
+        ],
+    },
+});
+
+const bannerUpload = multer({
+    storage: bannerStorage,
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed'), false);
+        }
+    },
+});
+
+module.exports = { cloudinary, upload, bannerUpload };

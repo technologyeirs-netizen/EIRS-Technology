@@ -315,7 +315,7 @@ const urlCategory = searchParams.get("categoryId");
 
   const fetchAdminProducts = async () => {
     try {
-      const data = await productService.getAllProducts(1, 1000, true);
+      const data = await productService.getAllProducts();
       const arr = Array.isArray(data) ? data : data.data || [];
       setProducts(arr);
     } catch {
