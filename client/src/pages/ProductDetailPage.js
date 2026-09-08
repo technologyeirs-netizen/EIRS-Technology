@@ -19,7 +19,7 @@ import {
 import { productService, reviewService } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
-import CheckoutModal from "../components/CheckoutModal";
+
 import ReviewForm from "../components/ReviewForm";
 import ReviewList from "../components/ReviewList";
 import "../styles/ProductDetailPage.css";
@@ -32,7 +32,7 @@ const ProductDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [quantity, setQuantity] = useState(1);
-  const [showCheckout, setShowCheckout] = useState(false);
+  
   const [activeTab, setActiveTab] = useState("description");
   const [addedToCart, setAddedToCart] = useState(false);
   const { user } = useAuth();
@@ -137,7 +137,7 @@ const ProductDetailPage = () => {
     if (id) fetchReviews();
   }, [id, user]);
 
- const handleAddToCart = () => {
+const handleAddToCart = () => {
   if (!product || product.stock <= 0) return;
 
   const discount = product.discount || 0;
@@ -145,7 +145,7 @@ const ProductDetailPage = () => {
   const cleanProduct = {
     _id: product._id,
     productName: product.productName || product.name,
-    price: product.price, // ORIGINAL PRICE
+    price: product.price,
     discount: discount,
     hsn: product.hsn || "",
     modelNo: product.modelNo || "",
@@ -156,11 +156,11 @@ const ProductDetailPage = () => {
 
   addToCart(cleanProduct, quantity);
 
-  setAddedToCart(true);
-  setTimeout(() => setAddedToCart(false), 2500);
+  // Cart page par redirect
+  navigate("/cart");
 };
 
-  const handleBuyNow = () => {
+const handleBuyNow = () => {
   if (!user) {
     navigate("/signin");
     return;
@@ -173,7 +173,7 @@ const ProductDetailPage = () => {
   const cleanProduct = {
     _id: product._id,
     productName: product.productName || product.name,
-    price: product.price, // ORIGINAL PRICE
+    price: product.price,
     discount: discount,
     hsn: product.hsn || "",
     modelNo: product.modelNo || "",
@@ -184,7 +184,8 @@ const ProductDetailPage = () => {
 
   addToCart(cleanProduct, quantity);
 
-  setShowCheckout(true);
+  // Buy Now ke baad direct cart
+  navigate("/cart");
 };
 
   const renderStars = (rating) => {
@@ -690,17 +691,7 @@ const ProductDetailPage = () => {
       </div>
 
       {/* Checkout Modal */}
-      {user && (
-        <CheckoutModal
-          isOpen={showCheckout}
-          onClose={() => setShowCheckout(false)}
-          cartItems={[{ ...product, quantity }]}
-          totalAmount={sellingPrice * quantity}
-          userId={user._id}
-          userName={user.name}
-          userEmail={user.email}
-        />
-      )}
+     
     </div>
   );
 };
