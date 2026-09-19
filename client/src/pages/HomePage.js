@@ -8,6 +8,7 @@ import CategorySidebar from "../components/CategorySidebar";
 import WhatsAppButton from "../components/WhatsAppButton";
 import InstagramButton from "../components/InstagramButton";
 import FacebookButton from "../components/FacebookButton";
+import InstallButton from "../components/InstallButton";
 import Footer from "../components/Footer";
 import { useCategoryFilter } from "../context/CategoryFilterContext";
 import { useSearchParams } from "react-router-dom";
@@ -836,6 +837,7 @@ const urlCategory = searchParams.get("categoryId");
       <WhatsAppButton />
       <InstagramButton />
       <FacebookButton />
+      <InstallButton />
     </div>
   );
 };
