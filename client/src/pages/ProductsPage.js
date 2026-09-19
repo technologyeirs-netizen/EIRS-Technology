@@ -170,31 +170,44 @@ const ProductsPage = () => {
     };
   }, [fetchProducts, fetchProductsFresh, fetchCategoriesAndSubcategories]);
 
-  useEffect(() => {
-    const searchQuery = searchParams.get("search");
-    setSearchTerm(searchQuery ? decodeURIComponent(searchQuery) : "");
+ useEffect(() => {
+  const searchQuery = searchParams.get("search");
+  setSearchTerm(searchQuery ? decodeURIComponent(searchQuery) : "");
 
-    const categoryFromUrl = searchParams.get("category");
-    if (categoryFromUrl) {
-      setSelectedCategory(decodeURIComponent(categoryFromUrl));
-      const subcategoryFromUrl = searchParams.get("subcategory");
-      setSelectedSubcategory(
-        subcategoryFromUrl ? decodeURIComponent(subcategoryFromUrl) : "",
-      );
+  const categoryFromUrl = searchParams.get("category");
 
-      const submenuFromUrl = searchParams.get("submenu");
-      setSelectedSubmenu(
-        submenuFromUrl ? decodeURIComponent(submenuFromUrl) : "",
-      );
+  if (categoryFromUrl) {
+    const decodedCategory = decodeURIComponent(categoryFromUrl);
 
-      setSelectedBrand("");
-      setSelectedSidebarCategories(new Set());
-    } else {
-      setSelectedCategory("");
-      setSelectedSubcategory("");
-      setSelectedSubmenu("");
-    }
-  }, [searchParams]);
+    const matchedCategory = categories.find(
+      (cat) =>
+        String(cat._id) === String(decodedCategory) ||
+        cat.name?.trim().toLowerCase() ===
+          decodedCategory.trim().toLowerCase()
+    );
+
+    setSelectedCategory(matchedCategory?._id || decodedCategory);
+
+    const subcategoryFromUrl = searchParams.get("subcategory");
+    setSelectedSubcategory(
+      subcategoryFromUrl
+        ? decodeURIComponent(subcategoryFromUrl)
+        : ""
+    );
+
+    const submenuFromUrl = searchParams.get("submenu");
+    setSelectedSubmenu(
+      submenuFromUrl ? decodeURIComponent(submenuFromUrl) : ""
+    );
+
+    setSelectedBrand("");
+    setSelectedSidebarCategories(new Set());
+  } else {
+    setSelectedCategory("");
+    setSelectedSubcategory("");
+    setSelectedSubmenu("");
+  }
+}, [searchParams, categories]);
 
   const filterProducts = useCallback(() => {
     try {
@@ -203,21 +216,17 @@ const ProductsPage = () => {
         result = result.filter(
           (p) => p.category && selectedSidebarCategories.has(p.category),
         );
-     if (selectedCategory) {
+    if (selectedCategory) {
   result = result.filter((p) => {
     if (!p.category) return false;
 
+    // Product category is populated object
     if (typeof p.category === "object") {
-      return (
-        p.category.name?.trim().toLowerCase() ===
-        selectedCategory.trim().toLowerCase()
-      );
+      return String(p.category._id) === String(selectedCategory);
     }
 
-    return (
-      String(p.category).trim().toLowerCase() ===
-      selectedCategory.trim().toLowerCase()
-    );
+    // Product category is stored directly as ObjectId/string
+    return String(p.category) === String(selectedCategory);
   });
 }
       if (selectedSubcategory) {
