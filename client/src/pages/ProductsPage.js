@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback, useMemo } from "react";
+﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   FaTimes,
@@ -19,11 +19,12 @@ import CategorySidebar from "../components/CategorySidebar";
 import "../styles/ProductsPage.css";
 
 const ITEMS_PER_PAGE = 15;
+const FETCH_LIMIT = 50; // per-request size; we loop through ALL pages
+const MAX_PAGES = 100; // safety stop
 
 const API_ROOT = (
   process.env.REACT_APP_API_URL || "http://localhost:5000"
 ).replace(/\/$/, "");
-
 const API_BASE = `${API_ROOT}/api`;
 
 const SORT_OPTIONS = [
@@ -34,6 +35,96 @@ const SORT_OPTIONS = [
   { value: "most-popular", label: "Most Popular" },
 ];
 
+/* ----------------------------- helpers ----------------------------- */
+
+const norm = (v) => String(v ?? "").trim().toLowerCase();
+
+// Response kisi bhi shape mein ho, array nikaal do
+const toArray = (res) => {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.data)) return res.data;
+  if (Array.isArray(res?.data?.data)) return res.data.data;
+  if (Array.isArray(res?.products)) return res.products;
+  return [];
+};
+
+// Backend se total / totalPages nikaalo (agar de raha ho)
+const getMeta = (res) => {
+  const src = res?.pagination || res?.data?.pagination || res || {};
+  return {
+    total: src.total ?? src.totalProducts ?? src.totalItems ?? res?.total ?? null,
+    totalPages: src.totalPages ?? src.pages ?? res?.totalPages ?? null,
+  };
+};
+
+// Saare pages fetch karke ek array bana do (duplicates hata ke)
+const fetchAllPages = async (fetcher) => {
+  const map = new Map();
+  let page = 1;
+
+  while (page <= MAX_PAGES) {
+    const res = await fetcher(page, FETCH_LIMIT);
+    const arr = toArray(res);
+    if (arr.length === 0) break;
+
+    const before = map.size;
+    arr.forEach((p) => map.set(String(p._id ?? `${page}-${map.size}`), p));
+
+    // Naya kuch nahi aaya => backend page ignore kar raha hai, ruk jao
+    if (map.size === before) break;
+
+    const { total, totalPages } = getMeta(res);
+    if (totalPages && page >= totalPages) break;
+    if (total && map.size >= total) break;
+
+    page += 1;
+  }
+  return Array.from(map.values());
+};
+
+// Sabse reliable tareeka: backend ko seedha hit karo, limit=1000 => saare
+// products ek hi request mein (productService / pagination / count cache bypass)
+const fetchEverything = async (fallbackFetcher) => {
+  let direct = [];
+  let directTotal = null;
+
+  try {
+    const res = await fetch(`${API_BASE}/products?limit=1000&_t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const json = await res.json();
+      direct = toArray(json);
+      directTotal = getMeta(json).total;
+    }
+  } catch {
+    // fallback neeche
+  }
+
+  console.log("DIRECT FETCH:", direct.length, "backend total:", directTotal);
+
+  // Direct fetch ne poora data diya to yahin khatam
+  if (direct.length > 0 && (!directTotal || direct.length >= directTotal)) {
+    return direct;
+  }
+
+  // Warna page-by-page fallback
+  const paged = await fetchAllPages(fallbackFetcher);
+  console.log("PAGED FETCH:", paged.length);
+  return paged.length >= direct.length ? paged : direct;
+};
+
+// Product ki category/subcategory populated object ho ya plain id/name -
+// dono cases ke liye comparable keys nikaalo
+const refKeys = (ref) => {
+  if (!ref) return [];
+  if (typeof ref === "object")
+    return [ref._id, ref.name].filter(Boolean).map(norm);
+  return [norm(ref)];
+};
+
+/* ----------------------------- component ----------------------------- */
+
 const ProductsPage = () => {
   const [searchParams] = useSearchParams();
   const [categories, setCategories] = useState([]);
@@ -42,7 +133,6 @@ const ProductsPage = () => {
   const { isSidebarOpen, closeSidebar } = useCategoryFilter();
 
   const [products, setProducts] = useState([]);
-  const [filteredProducts, setFilteredProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(() => {
     const saved = sessionStorage.getItem("pp_currentPage");
@@ -51,6 +141,8 @@ const ProductsPage = () => {
   });
 
   const [searchTerm, setSearchTerm] = useState("");
+  // selectedCategory: normally category _id (URL se name aaye to categories
+  // load hone ke baad _id mein convert ho jata hai)
   const [selectedCategory, setSelectedCategory] = useState(() => {
     const c = searchParams.get("category");
     return c ? decodeURIComponent(c) : "";
@@ -81,25 +173,17 @@ const ProductsPage = () => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [buyNowQuantity, setBuyNowQuantity] = useState(1);
 
+  /* ---------------------------- data fetching ---------------------------- */
+
   const fetchProducts = useCallback(async () => {
     try {
-      const data = await productService.getAllProducts(1, 50);
-      const arr = Array.isArray(data) ? data : data.data || [];
-
-      // If cache/network race returns an empty list, force one fresh fetch
-      // before showing an empty catalog to users.
-      if (arr.length === 0) {
-        const fresh = await productService.getProductsFresh(1, 50);
-        const freshArr = Array.isArray(fresh) ? fresh : fresh.data || [];
-        setProducts(freshArr);
-        setFilteredProducts(freshArr);
-      } else {
-        setProducts(arr);
-        setFilteredProducts(arr);
-      }
+      const all = await fetchEverything((p, l) =>
+        productService.getProductsFresh(p, l),
+      );
+      console.log("TOTAL PRODUCTS LOADED:", all.length);
+      setProducts(all);
     } catch {
       setProducts([]);
-      setFilteredProducts([]);
     } finally {
       setLoading(false);
     }
@@ -107,13 +191,15 @@ const ProductsPage = () => {
 
   const fetchProductsFresh = useCallback(async () => {
     try {
-      const data = await productService.getProductsFresh(1, 50);
-
-      const arr = Array.isArray(data) ? data : data.data || [];
-
-      setProducts(arr);
-    } catch (err) {
-     
+      const all = await fetchEverything((p, l) =>
+        productService.getProductsFresh(p, l),
+      );
+      if (all.length > 0) {
+        setProducts(all);
+        localStorage.removeItem("products_dirty");
+      }
+    } catch {
+      // ignore
     }
   }, []);
 
@@ -123,21 +209,17 @@ const ProductsPage = () => {
         productService.getCategories
           ? productService.getCategories()
           : fetch(`${API_BASE}/categories`).then((res) => res.json()),
-
         productService.getSubcategories
           ? productService.getSubcategories()
           : fetch(`${API_BASE}/subcategories`).then((res) => res.json()),
       ]);
 
-      const catData = catRes.data || catRes?.data?.data || [];
-      const subData = subRes.data || subRes?.data?.data || [];
-
-      setCategories(catData);
-      setSubcategoriesData(subData);
-    } catch (err) {
-      
+      setCategories(toArray(catRes));
+      setSubcategoriesData(toArray(subRes));
+    } catch {
+      // ignore
     }
-  }, [API_BASE]);
+  }, []);
 
   useEffect(() => {
     fetchProducts();
@@ -145,7 +227,6 @@ const ProductsPage = () => {
 
     const interval = setInterval(fetchProductsFresh, 5 * 60 * 1000);
 
-    // Refresh when the tab becomes visible and an admin update dirtied the cache
     const handleVisibility = () => {
       if (
         document.visibilityState === "visible" &&
@@ -154,7 +235,6 @@ const ProductsPage = () => {
         fetchProductsFresh();
       }
     };
-    // Refresh when another tab sets the dirty flag
     const handleStorage = (e) => {
       if (e.key === "products_dirty" && e.newValue === "true") {
         fetchProductsFresh();
@@ -170,142 +250,179 @@ const ProductsPage = () => {
     };
   }, [fetchProducts, fetchProductsFresh, fetchCategoriesAndSubcategories]);
 
- useEffect(() => {
-  const searchQuery = searchParams.get("search");
-  setSearchTerm(searchQuery ? decodeURIComponent(searchQuery) : "");
+  /* ---------------------------- URL -> state ---------------------------- */
 
-  const categoryFromUrl = searchParams.get("category");
+  useEffect(() => {
+    const searchQuery = searchParams.get("search");
+    setSearchTerm(searchQuery ? decodeURIComponent(searchQuery) : "");
 
-  if (categoryFromUrl) {
-    const decodedCategory = decodeURIComponent(categoryFromUrl);
+    const categoryFromUrl = searchParams.get("category");
+    if (categoryFromUrl) {
+      setSelectedCategory(decodeURIComponent(categoryFromUrl));
 
-    const matchedCategory = categories.find(
-      (cat) =>
-        String(cat._id) === String(decodedCategory) ||
-        cat.name?.trim().toLowerCase() ===
-          decodedCategory.trim().toLowerCase()
-    );
+      const sub = searchParams.get("subcategory");
+      setSelectedSubcategory(sub ? decodeURIComponent(sub) : "");
 
-    setSelectedCategory(matchedCategory?._id || decodedCategory);
+      const submenu = searchParams.get("submenu");
+      setSelectedSubmenu(submenu ? decodeURIComponent(submenu) : "");
 
-    const subcategoryFromUrl = searchParams.get("subcategory");
-    setSelectedSubcategory(
-      subcategoryFromUrl
-        ? decodeURIComponent(subcategoryFromUrl)
-        : ""
-    );
-
-    const submenuFromUrl = searchParams.get("submenu");
-    setSelectedSubmenu(
-      submenuFromUrl ? decodeURIComponent(submenuFromUrl) : ""
-    );
-
-    setSelectedBrand("");
-    setSelectedSidebarCategories(new Set());
-  } else {
-    setSelectedCategory("");
-    setSelectedSubcategory("");
-    setSelectedSubmenu("");
-  }
-}, [searchParams, categories]);
-
-  const filterProducts = useCallback(() => {
-    try {
-      let result = [...products];
-      if (selectedSidebarCategories.size > 0)
-        result = result.filter(
-          (p) => p.category && selectedSidebarCategories.has(p.category),
-        );
-    if (selectedCategory) {
-  result = result.filter((p) => {
-    if (!p.category) return false;
-
-    // Product category is populated object
-    if (typeof p.category === "object") {
-      return String(p.category._id) === String(selectedCategory);
+      setSelectedBrand("");
+      setSelectedSidebarCategories(new Set());
+    } else {
+      setSelectedCategory("");
+      setSelectedSubcategory("");
+      setSelectedSubmenu("");
     }
+  }, [searchParams]);
 
-    // Product category is stored directly as ObjectId/string
-    return String(p.category) === String(selectedCategory);
-  });
-}
-      if (selectedSubcategory) {
-  result = result.filter(
-    (p) =>
-      p.subcategory &&
-      p.subcategory.trim().toLowerCase() ===
-        selectedSubcategory.trim().toLowerCase()
+  // URL se category NAME aaya ho to categories load hone par _id mein badlo
+  useEffect(() => {
+    if (!selectedCategory || categories.length === 0) return;
+    const match = categories.find(
+      (c) =>
+        String(c._id) === String(selectedCategory) ||
+        norm(c.name) === norm(selectedCategory),
+    );
+    if (match && String(match._id) !== String(selectedCategory)) {
+      setSelectedCategory(String(match._id));
+    }
+  }, [categories, selectedCategory]);
+
+  /* ---------------------------- derived data ---------------------------- */
+
+  const selectedCategoryObj = useMemo(() => {
+    if (!selectedCategory) return null;
+    return (
+      categories.find(
+        (c) =>
+          String(c._id) === String(selectedCategory) ||
+          norm(c.name) === norm(selectedCategory),
+      ) || null
+    );
+  }, [categories, selectedCategory]);
+
+  // Selected category ke subcategories (dropdown ke liye)
+  const subcategories = useMemo(() => {
+    if (!selectedCategoryObj) return [];
+    return subcategoriesData.filter((sub) => {
+      const catId =
+        typeof sub.category === "object" ? sub.category?._id : sub.category;
+      return String(catId) === String(selectedCategoryObj._id);
+    });
+  }, [selectedCategoryObj, subcategoriesData]);
+
+  const uniqueBrands = useMemo(
+    () => [...new Set(products.map((p) => p.brand).filter(Boolean))].sort(),
+    [products],
   );
-}
-      if (selectedSubmenu)
-        result = result.filter(
-          (p) => p.submenu && p.submenu.trim() === selectedSubmenu.trim(),
-        );
-      if (!isFromSidebar && selectedBrand)
-        result = result.filter(
-          (p) => p.brand && p.brand.trim() === selectedBrand.trim(),
-        );
-      if (!isFromSidebar && searchTerm.trim()) {
-        const q = searchTerm.toLowerCase().trim();
-        result = result.filter(
-          (p) =>
-            (p.productName && p.productName.toLowerCase().includes(q)) ||
-            (p.description && p.description.toLowerCase().includes(q)) ||
-            (p.brand && p.brand.toLowerCase().includes(q)) ||
-            (
-  (typeof p.category === "object"
-    ? p.category?.name
-    : p.category || "")
-    .toLowerCase()
-    .includes(q)
-)
-        );
-      }
-      if (minPrice || maxPrice) {
-        const min = minPrice ? parseFloat(minPrice) : 0;
-        const max = maxPrice ? parseFloat(maxPrice) : Infinity;
-        result = result.filter((p) => {
-          const price = parseFloat(p.price) || 0;
-          return price >= min && price <= max;
-        });
-      }
-      if (sortBy) {
-        switch (sortBy) {
-          case "price-low-high":
-            result.sort(
-              (a, b) => (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0),
-            );
-            break;
-          case "price-high-low":
-            result.sort(
-              (a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0),
-            );
-            break;
-          case "most-popular":
-            result.sort((a, b) => {
-              const d =
-                (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
-              return d !== 0 ? d : (b.reviewCount || 0) - (a.reviewCount || 0);
-            });
-            break;
-          case "top-rated":
-            result.sort(
-              (a, b) =>
-                (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0),
-            );
-            break;
-          default:
-            break;
-        }
-      }
-      setFilteredProducts(result);
-    } catch {
-      setFilteredProducts(products);
+
+  const filteredProducts = useMemo(() => {
+    let result = [...products];
+
+    // Sidebar multi-select categories (name ya id dono chalega)
+    if (selectedSidebarCategories.size > 0) {
+      const wanted = new Set(
+        Array.from(selectedSidebarCategories).map((c) => norm(c)),
+      );
+      result = result.filter((p) =>
+        refKeys(p.category).some((k) => wanted.has(k)),
+      );
     }
+
+    // Category
+    if (selectedCategory) {
+      const keys = new Set(
+        selectedCategoryObj
+          ? [selectedCategoryObj._id, selectedCategoryObj.name]
+              .filter(Boolean)
+              .map(norm)
+          : [norm(selectedCategory)],
+      );
+      result = result.filter((p) =>
+        refKeys(p.category).some((k) => keys.has(k)),
+      );
+    }
+
+    // Subcategory (name se select hota hai; product mein name/id/object kuch bhi ho)
+    if (selectedSubcategory) {
+      const subObj = subcategoriesData.find(
+        (s) => norm(s.name) === norm(selectedSubcategory),
+      );
+      const keys = new Set(
+        [norm(selectedSubcategory), subObj ? norm(subObj._id) : null].filter(
+          Boolean,
+        ),
+      );
+      result = result.filter((p) =>
+        refKeys(p.subcategory).some((k) => keys.has(k)),
+      );
+    }
+
+    // Submenu
+    if (selectedSubmenu) {
+      result = result.filter(
+        (p) => p.submenu && norm(p.submenu) === norm(selectedSubmenu),
+      );
+    }
+
+    // Brand
+    if (!isFromSidebar && selectedBrand) {
+      result = result.filter((p) => p.brand && norm(p.brand) === norm(selectedBrand));
+    }
+
+    // Search
+    if (!isFromSidebar && searchTerm.trim()) {
+      const q = norm(searchTerm);
+      result = result.filter((p) => {
+        const catName =
+          typeof p.category === "object" ? p.category?.name : p.category;
+        return (
+          norm(p.productName).includes(q) ||
+          norm(p.description).includes(q) ||
+          norm(p.brand).includes(q) ||
+          norm(catName).includes(q)
+        );
+      });
+    }
+
+    // Price
+    if (minPrice || maxPrice) {
+      const min = minPrice ? parseFloat(minPrice) : 0;
+      const max = maxPrice ? parseFloat(maxPrice) : Infinity;
+      result = result.filter((p) => {
+        const price = parseFloat(p.price) || 0;
+        return price >= min && price <= max;
+      });
+    }
+
+    // Sort
+    switch (sortBy) {
+      case "price-low-high":
+        result.sort((a, b) => (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0));
+        break;
+      case "price-high-low":
+        result.sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
+        break;
+      case "most-popular":
+        result.sort((a, b) => {
+          const d = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
+          return d !== 0 ? d : (b.reviewCount || 0) - (a.reviewCount || 0);
+        });
+        break;
+      case "top-rated":
+        result.sort((a, b) => (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0));
+        break;
+      default:
+        break;
+    }
+
+    return result;
   }, [
     products,
+    subcategoriesData,
     searchTerm,
     selectedCategory,
+    selectedCategoryObj,
     selectedSubcategory,
     selectedSubmenu,
     selectedBrand,
@@ -316,18 +433,12 @@ const ProductsPage = () => {
     isFromSidebar,
   ]);
 
-  useEffect(() => {
-    filterProducts();
-   
-  }, [filterProducts]);
+  /* ---------------------------- pagination ---------------------------- */
 
-  // Reset to page 1 only when the user actually changes a filter/search/sort.
-  // Compare by *content* (not object reference) — some effects recreate the
-  // selectedSidebarCategories Set with a new reference on mount even when its
-  // contents haven't changed, which would otherwise cause a false reset.
+  // Filter/search/sort badalne par hi page 1 par jao
   const filterFingerprint = JSON.stringify({
     searchTerm,
-    selectedCategory,
+    selectedCategory: selectedCategoryObj?._id || selectedCategory,
     selectedSubcategory,
     selectedSubmenu,
     selectedBrand,
@@ -336,11 +447,9 @@ const ProductsPage = () => {
     maxPrice,
     sortBy,
   });
-  const prevFilterFingerprintRef = React.useRef(null);
+  const prevFilterFingerprintRef = useRef(null);
   useEffect(() => {
     if (prevFilterFingerprintRef.current === null) {
-      // First run after mount: don't reset, just record the baseline so a
-      // restored page (from sessionStorage) survives coming back via back button.
       prevFilterFingerprintRef.current = filterFingerprint;
       return;
     }
@@ -350,54 +459,31 @@ const ProductsPage = () => {
     }
   }, [filterFingerprint]);
 
-  // Persist the current page so it survives navigating away (e.g. opening a
-  // product) and coming back.
   useEffect(() => {
     try {
       sessionStorage.setItem("pp_currentPage", String(currentPage));
     } catch {
-      // ignore storage errors (e.g. private browsing)
+      // ignore
     }
   }, [currentPage]);
 
-
-
-  const uniqueBrands = useMemo(
-    () => [...new Set(products.map((p) => p.brand).filter(Boolean))],
-    [products],
-  );
-  const subcategories = useMemo(() => {
-    if (!selectedCategory) return [];
-
-    const selectedCat = categories.find(
-      (cat) => cat.name?.trim() === selectedCategory.trim(),
-    );
-
-    if (!selectedCat) return [];
-
-    return subcategoriesData.filter((sub) => {
-      if (typeof sub.category === "object") {
-        return sub.category?._id === selectedCat._id;
-      }
-
-      return sub.category === selectedCat._id;
-    });
-  }, [selectedCategory, categories, subcategoriesData]);
   const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
 
-  // Clamp the restored/current page if it no longer exists (e.g. fewer
-  // results than before).
+  // Products load hone se pehle page clamp mat karo
   useEffect(() => {
-    if (totalPages > 0 && currentPage > totalPages) {
+    if (!loading && totalPages > 0 && currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [totalPages, currentPage]);
+  }, [totalPages, currentPage, loading]);
 
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedProducts = useMemo(
     () => filteredProducts.slice(startIndex, startIndex + ITEMS_PER_PAGE),
     [filteredProducts, startIndex],
   );
+
+  /* ---------------------------- actions ---------------------------- */
+
   const activeFiltersCount = [
     selectedCategory,
     selectedSubcategory,
@@ -425,9 +511,8 @@ const ProductsPage = () => {
   const handleSidebarCategorySelect = useCallback((categoryName) => {
     setSelectedSidebarCategories((prev) => {
       const next = new Set(prev);
-      next.has(categoryName)
-        ? next.delete(categoryName)
-        : next.add(categoryName);
+      if (next.has(categoryName)) next.delete(categoryName);
+      else next.add(categoryName);
       return next;
     });
     setCurrentPage(1);
@@ -451,12 +536,8 @@ const ProductsPage = () => {
   const activeChips = useMemo(() => {
     const chips = [];
     if (selectedCategory) {
-      const catName =
-        categories.find((c) => c._id === selectedCategory)?.name ||
-        selectedCategory;
-
       chips.push({
-        label: catName,
+        label: selectedCategoryObj?.name || selectedCategory,
         clear: () => {
           setSelectedCategory("");
           setSelectedSubcategory("");
@@ -486,12 +567,15 @@ const ProductsPage = () => {
     return chips;
   }, [
     selectedCategory,
+    selectedCategoryObj,
     selectedSubcategory,
     selectedBrand,
     minPrice,
     maxPrice,
     sortBy,
   ]);
+
+  /* ---------------------------- render ---------------------------- */
 
   return (
     <main className="pp-page">
@@ -554,9 +638,7 @@ const ProductsPage = () => {
                   className={`pp-filter-btn ${selectedCategory ? "pp-filter-btn--active" : ""}`}
                   onClick={() => toggleDropdown("category")}
                 >
-                  <FaTag />{" "}
-                  {categories.find((c) => c._id === selectedCategory)?.name ||
-                    "Category"}
+                  <FaTag /> {selectedCategoryObj?.name || "Category"}
                   <FaChevronDown
                     className={`pp-chevron ${openDropdown === "category" ? "pp-chevron--open" : ""}`}
                   />
@@ -575,10 +657,14 @@ const ProductsPage = () => {
                     </div>
                     {categories.map((cat) => (
                       <div
-                        key={cat.name}
-                        className={`pp-dropdown-item ${selectedCategory === cat.name ? "pp-dropdown-item--active" : ""}`}
+                        key={cat._id}
+                        className={`pp-dropdown-item ${
+                          selectedCategoryObj?._id === cat._id
+                            ? "pp-dropdown-item--active"
+                            : ""
+                        }`}
                         onClick={() => {
-                          setSelectedCategory(cat._id);
+                          setSelectedCategory(String(cat._id));
                           setSelectedSubcategory("");
                           setOpenDropdown(null);
                         }}
@@ -613,12 +699,11 @@ const ProductsPage = () => {
                       >
                         All Subcategories
                       </div>
-
                       {subcategories.map((sub) => (
                         <div
                           key={sub._id}
                           className={`pp-dropdown-item ${
-                            selectedSubcategory === sub.name
+                            norm(selectedSubcategory) === norm(sub.name)
                               ? "pp-dropdown-item--active"
                               : ""
                           }`}
@@ -787,11 +872,13 @@ const ProductsPage = () => {
             <p className="pp-results-text">
               {loading ? (
                 "Loading..."
+              ) : filteredProducts.length === 0 ? (
+                "No products"
               ) : (
                 <>
                   Showing{" "}
                   <strong>
-                    {Math.min(startIndex + 1, filteredProducts.length)}–
+                    {startIndex + 1}–
                     {Math.min(
                       startIndex + ITEMS_PER_PAGE,
                       filteredProducts.length,

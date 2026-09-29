@@ -2,13 +2,25 @@ const Product = require('../model/productSchema.js');
 const Category = require('../model/categorySchema');
 const mongoose = require("mongoose");
 
+// =========================
+// CACHE (per page/limit/category, refresh every 10 minutes)
+// =========================
+const productsCache = new Map();
+const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+
+const clearProductsCache = () => {
+  productsCache.clear();
+};
+
+// =========================
+// CREATE PRODUCT
+// =========================
 exports.createProduct = async (req, res) => {
   try {
     console.log("📦 Creating product:", req.body);
 
     const { category } = req.body;
 
-    // ❌ INVALID ID BLOCK
     if (!mongoose.Types.ObjectId.isValid(category)) {
       return res.status(400).json({
         success: false,
@@ -24,12 +36,14 @@ exports.createProduct = async (req, res) => {
 
     await product.save();
 
+    // New product added -> old cached lists are stale
+    clearProductsCache();
+
     res.status(201).json({
       success: true,
       message: "Product created successfully",
       data: product,
     });
-
   } catch (error) {
     console.error("❌ Error creating product:", error);
     res.status(400).json({
@@ -39,98 +53,71 @@ exports.createProduct = async (req, res) => {
   }
 };
 
-// Multi-level cache for products (refresh every 10 minutes)
-let productsCache = new Map(); // Cache per page
-let totalCountCache = null;
-let totalCountTimestamp = null;
-const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
-const COUNT_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes for count
-
-
-
+// =========================
+// GET ALL PRODUCTS
+// =========================
 exports.getAllProducts = async (req, res) => {
-  console.log("🔥 ===== API HIT =====");
-  console.log("🔥 REQUEST QUERY:", req.query);
-  console.log("🔥 REQUEST URL:", req.originalUrl);
-
   try {
     const now = Date.now();
 
-    const page = parseInt(req.query.page) || 1;
+    const page = parseInt(req.query.page, 10) || 1;
     const requestedLimit = parseInt(req.query.limit, 10);
-    const wantsAll = req.query.limit === "all" || req.query.all === "true" || (Number.isFinite(requestedLimit) && requestedLimit >= 1000);
-    const limit = wantsAll ? 0 : (Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 50);
+    const wantsAll =
+      req.query.limit === "all" ||
+      req.query.all === "true" ||
+      (Number.isFinite(requestedLimit) && requestedLimit >= 1000);
+    const limit = wantsAll
+      ? 0
+      : Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? requestedLimit
+        : 50;
     const skip = wantsAll ? 0 : (page - 1) * limit;
-    const shouldBypassCache = req.query.refresh === "true" || req.query._t || req.query.bust === "true";
+    const shouldBypassCache =
+      req.query.refresh === "true" ||
+      req.query._t ||
+      req.query.bust === "true";
 
-    console.log("📦 PAGE:", page, "LIMIT:", limit, "SKIP:", skip, "WANTS_ALL:", wantsAll, "BYPASS_CACHE:", shouldBypassCache);
-
-    const cacheKey = `${page}_${wantsAll ? "all" : limit}`;
-
-    // =========================
-    // CACHE CHECK
-    // =========================
-    const cachedPage = productsCache.get(cacheKey);
-    if (!shouldBypassCache && cachedPage && (now - cachedPage.timestamp) < CACHE_DURATION) {
-      console.log(`✅ CACHE HIT for page ${page}`);
-      res.set("Cache-Control", "public, max-age=300");
-      res.set("X-Cache", "HIT");
-      return res.json(cachedPage.data);
-    }
-
-    // =========================
-    // TOTAL COUNT CACHE
-    // =========================
-    let total;
-    if (
-      totalCountCache !== null &&
-      totalCountTimestamp &&
-      (now - totalCountTimestamp) < COUNT_CACHE_DURATION
-    ) {
-      total = totalCountCache;
-      console.log("📊 Total Count from CACHE:", total);
-    } else {
-      total = await Product.countDocuments();
-      totalCountCache = total;
-      totalCountTimestamp = now;
-      console.log("📊 Total Count from DB:", total);
-    }
-
-    // =========================
-    // DEBUG FILTER (IMPORTANT)
-    // =========================
-    let filter = {};
-
+    // Filter (built BEFORE cache key so category is part of the key)
+    const filter = {};
     if (req.query.category) {
-      console.log("⚠️ RAW CATEGORY VALUE:", req.query.category);
-
-      // SAFE CHECK (IMPORTANT)
       if (mongoose.Types.ObjectId.isValid(req.query.category)) {
         filter.category = req.query.category;
-        console.log("✅ VALID ObjectId category used");
       } else {
         console.warn("❌ INVALID category (IGNORED):", req.query.category);
       }
     }
 
-    console.log("🎯 FINAL FILTER:", filter);
+    const cacheKey = `${page}_${wantsAll ? "all" : limit}_${filter.category || "any"}`;
 
-    // =========================
-    // DB QUERY
-    // =========================
+    // ---- Cache check ----
+    const cachedPage = productsCache.get(cacheKey);
+    if (
+      !shouldBypassCache &&
+      cachedPage &&
+      now - cachedPage.timestamp < CACHE_DURATION
+    ) {
+      res.set("Cache-Control", "public, max-age=300");
+      res.set("X-Cache", "HIT");
+      return res.json(cachedPage.data);
+    }
+
+    // ---- Always get a fresh, accurate count (fast, and respects filter) ----
+    const total = await Product.countDocuments(filter);
+
+    // ---- DB query ----
     const query = Product.find(filter)
       .populate("category", "name")
-      .select("_id productName category subcategory submenu channels brand price image stock modelNo hsn isFeatured discount")
-      .lean()
-      .sort({ createdAt: -1 });
+      .select(
+        "_id productName description category subcategory submenu channels brand price image stock modelNo hsn isFeatured discount rating reviewCount"
+      )
+      .sort({ createdAt: -1, _id: -1 }) // _id tiebreaker keeps pagination stable
+      .lean();
 
     if (!wantsAll && limit > 0) {
-      query.limit(limit).skip(skip);
+      query.skip(skip).limit(limit);
     }
 
     const products = await query.exec();
-
-    console.log("📦 PRODUCTS FOUND:", products.length);
 
     const response = {
       data: products,
@@ -142,73 +129,62 @@ exports.getAllProducts = async (req, res) => {
       },
     };
 
-    // =========================
-    // CACHE STORE
-    // =========================
-    productsCache.set(cacheKey, {
-      data: response,
-      timestamp: now,
-    });
+    // ---- Cache store ----
+    productsCache.set(cacheKey, { data: response, timestamp: now });
 
-    if (productsCache.size > 10) {
+    if (productsCache.size > 20) {
       const firstKey = productsCache.keys().next().value;
       productsCache.delete(firstKey);
-      console.log("🧹 Old cache cleared:", firstKey);
     }
 
     res.set("Cache-Control", "public, max-age=300");
     res.set("X-Cache", "MISS");
-
     res.json(response);
   } catch (error) {
-    console.error("❌ FULL ERROR:", error);
-    console.error("❌ ERROR NAME:", error.name);
-    console.error("❌ ERROR PATH:", error.path);
-    console.error("❌ ERROR VALUE:", error.value);
-
-    res.status(500).json({
-      message: error.message,
-    });
+    console.error("❌ getAllProducts error:", error);
+    res.status(500).json({ message: error.message });
   }
 };
 
+// =========================
+// GET PRODUCT BY ID
+// =========================
 exports.getProductById = async (req, res) => {
-    try {
-        const product = await Product.findById(req.params.id)
-        .populate("category", "name") 
-            .lean()
-            .exec();
-        if (!product) return res.status(404).json({ message: 'Product not found' });
-        res.json(product);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    const product = await Product.findById(req.params.id)
+      .populate("category", "name")
+      .lean()
+      .exec();
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
+// =========================
+// UPDATE PRODUCT
+// =========================
 exports.updateProduct = async (req, res) => {
   try {
-    let updateData = { ...req.body };
+    const updateData = { ...req.body };
 
+    // Category is always stored as ObjectId
     if (req.body.category) {
-      const categoryDoc = await Category.findById(req.body.category);
-      if (categoryDoc) {
-        if (req.body.category) {
-  updateData.category = req.body.category; // ALWAYS ObjectId
-}// ✅ convert ID to name
+      if (!mongoose.Types.ObjectId.isValid(req.body.category)) {
+        return res.status(400).json({ message: "Invalid category ID sent" });
       }
+      updateData.category = new mongoose.Types.ObjectId(req.body.category);
     }
 
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    const product = await Product.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!product) return res.status(404).json({ message: 'Product not found' });
 
-    productsCache.clear();
-    totalCountCache = null;
-    totalCountTimestamp = null;
+    clearProductsCache();
 
     res.json(product);
   } catch (error) {
@@ -216,126 +192,124 @@ exports.updateProduct = async (req, res) => {
   }
 };
 
+// =========================
+// DELETE PRODUCT
+// =========================
 exports.deleteProduct = async (req, res) => {
-    try {
-        const product = await Product.findByIdAndDelete(req.params.id);
-        if (!product) return res.status(404).json({ message: 'Product not found' });
-        
-        // Clear all caches when product is deleted
-        productsCache.clear();
-        totalCountCache = null;
-        totalCountTimestamp = null;
-        
-        res.json({ message: 'Product deleted successfully' });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
+  try {
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    clearProductsCache();
+
+    res.json({ message: 'Product deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
-// Get only featured products (for Homepage Top Products)
+// =========================
+// FEATURED PRODUCTS (Homepage Top Products)
+// =========================
 exports.getFeaturedProducts = async (req, res) => {
-    try {
-        const products = await Product.find({ isFeatured: true })
-        .populate("category", "name") 
-            .select('_id productName category subcategory brand price image stock modelNo isFeatured discount')
-            .lean()
-            .sort({ updatedAt: -1 })
-            .exec();
-        res.json({ success: true, data: products });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
+  try {
+    const products = await Product.find({ isFeatured: true })
+      .populate("category", "name")
+      .select('_id productName category subcategory brand price image stock modelNo isFeatured discount')
+      .lean()
+      .sort({ updatedAt: -1 })
+      .exec();
+    res.json({ success: true, data: products });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
-// Toggle isFeatured on a product (admin only)
+// =========================
+// TOGGLE FEATURED (admin only)
+// =========================
 exports.toggleFeatured = async (req, res) => {
-    try {
-        const product = await Product.findById(req.params.id);
-        if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
-
-        product.isFeatured = !product.isFeatured;
-        await product.save();
-
-        // Clear server-side cache
-        productsCache.clear();
-        totalCountCache = null;
-        totalCountTimestamp = null;
-
-        res.json({ success: true, isFeatured: product.isFeatured });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
     }
+
+    product.isFeatured = !product.isFeatured;
+    await product.save();
+
+    clearProductsCache();
+
+    res.json({ success: true, isFeatured: product.isFeatured });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
-// Get all unique subcategories
+// =========================
+// ALL UNIQUE SUBCATEGORIES
+// =========================
 exports.getAllSubcategories = async (req, res) => {
-    try {
-        const subcategories = await Product.distinct('subcategory');
-        const filteredSubcategories = subcategories.filter(sub => sub && sub.trim() !== '');
-        res.json({
-            success: true,
-            data: filteredSubcategories
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            success: false,
-            message: error.message 
-        });
-    }
+  try {
+    const subcategories = await Product.distinct('subcategory');
+    const filteredSubcategories = subcategories.filter(
+      (sub) => sub && sub.trim() !== ''
+    );
+    res.json({ success: true, data: filteredSubcategories });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
-// Get products by subcategory
+// =========================
+// PRODUCTS BY SUBCATEGORY
+// =========================
 exports.getProductsBySubcategory = async (req, res) => {
-    try {
-        const { subcategory } = req.params;
-        const products = await Product.find({ subcategory });
-        res.json({
-            success: true,
-            data: products
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            success: false,
-            message: error.message 
-        });
-    }
+  try {
+    const { subcategory } = req.params;
+    const products = await Product.find({ subcategory });
+    res.json({ success: true, data: products });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
-// Add subcategory to product
+// =========================
+// ADD SUBCATEGORY TO PRODUCT
+// =========================
 exports.addSubcategoryToProduct = async (req, res) => {
-    try {
-        const { productId } = req.params;
-        const { subcategory } = req.body;
-        
-        if (!subcategory || subcategory.trim() === '') {
-            return res.status(400).json({
-                success: false,
-                message: 'Subcategory is required'
-            });
-        }
-        
-        const product = await Product.findByIdAndUpdate(
-            productId,
-            { subcategory: subcategory.trim() },
-            { new: true, runValidators: true }
-        );
-        
-        if (!product) {
-            return res.status(404).json({
-                success: false,
-                message: 'Product not found'
-            });
-        }
-        
-        res.json({
-            success: true,
-            message: 'Subcategory added successfully',
-            data: product
-        });
-    } catch (error) {
-        res.status(400).json({ 
-            success: false,
-            message: error.message 
-        });
+  try {
+    const { productId } = req.params;
+    const { subcategory } = req.body;
+
+    if (!subcategory || subcategory.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Subcategory is required',
+      });
     }
+
+    const product = await Product.findByIdAndUpdate(
+      productId,
+      { subcategory: subcategory.trim() },
+      { new: true, runValidators: true }
+    );
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+
+    clearProductsCache();
+
+    res.json({
+      success: true,
+      message: 'Subcategory added successfully',
+      data: product,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
 };
