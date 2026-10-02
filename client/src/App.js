@@ -26,6 +26,8 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import OrdersPage from './pages/OrdersPage';
 import OrderSuccessPage from './pages/OrderSuccessPage';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminCoupons from './pages/AdminCoupons';
+import AdminReviews from './pages/AdminReviews';
 import AdminUsers from './pages/AdminUsers';
 import AdminEnquiries from './pages/AdminEnquiries';
 import AdminProducts from './pages/AdminProducts';
@@ -99,6 +101,8 @@ function AppContent() {
   }
 />
         <Route path="/admin/services" element={<ProtectedAdminRoute element={<AdminServices />} />} />
+        <Route path="/admin/coupons" element={<ProtectedAdminRoute element={<AdminCoupons />} />} />
+        <Route path="/admin/reviews" element={<ProtectedAdminRoute element={<AdminReviews />} />} />
         <Route path="/admin/orders" element={<ProtectedAdminRoute element={<AdminOrders />} />} />
       </Routes>
       {shouldShowFooter && <Footer />}

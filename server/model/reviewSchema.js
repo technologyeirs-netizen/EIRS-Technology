@@ -38,6 +38,35 @@ const reviewSchema = new Schema({
             message: 'Comment must be between 10 and 500 characters if provided'
         }
     },
+    // Set automatically when the reviewer has a confirmed order containing this product
+    verifiedPurchase: {
+        type: Boolean,
+        default: false
+    },
+    orderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Order',
+        default: null
+    },
+    // Admin moderation
+    adminVerified: {
+        type: Boolean,
+        default: false
+    },
+    isHidden: {
+        type: Boolean,
+        default: false
+    },
+    adminReply: {
+        type: String,
+        trim: true,
+        default: '',
+        maxlength: [500, 'Reply cannot exceed 500 characters']
+    },
+    adminReplyAt: {
+        type: Date,
+        default: null
+    },
     createdAt: {
         type: Date,
         default: Date.now

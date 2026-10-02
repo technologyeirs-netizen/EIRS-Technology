@@ -256,6 +256,18 @@ export const authService = {
 
 // Products Services
 export const productService = {
+  // Server-side filtered listing. Always fresh (no localStorage), returns ALL matches unless page/limit given.
+  queryProducts: async (params = {}) => {
+    const clean = {};
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '' && v !== false) clean[k] = v;
+    });
+    if (!clean.limit) clean.limit = 'all';
+    clean._t = Date.now();
+    const response = await api.get('/auth/products', { params: clean, timeout: 45000 });
+    return response.data; // { data, pagination }
+  },
+
   getAllProducts: async (page = 1, limit = 1000, skipCache = false) => {
     const cacheKey = `products_cache_${page}_${limit}`;
     const cached = localStorage.getItem(cacheKey);
@@ -832,6 +844,52 @@ export const reviewService = {
       throw error.response?.data || error;
     }
   },
+};
+
+// Review extras
+reviewService.canReview = async (productId) => {
+  try {
+    const r = await api.get(`/auth/reviews/product/${productId}/can-review`);
+    return r.data;
+  } catch (error) {
+    throw error.response?.data || error;
+  }
+};
+
+// Admin: reviews moderation
+export const adminReviewService = {
+  getAll: async (params = {}) => (await api.get('/auth/reviews/admin/all', { params })).data,
+  update: async (id, body) => (await api.put(`/auth/reviews/admin/${id}`, body)).data,
+  toggleVerify: async (id) => (await api.patch(`/auth/reviews/admin/${id}/verify`)).data,
+  toggleHide: async (id) => (await api.patch(`/auth/reviews/admin/${id}/hide`)).data,
+  remove: async (id) => (await api.delete(`/auth/reviews/admin/${id}`)).data,
+};
+
+// Coupons
+export const couponService = {
+  // customer
+  getAvailable: async (subtotal) =>
+    (await api.get('/auth/coupons/available', { params: subtotal !== undefined ? { subtotal } : {} })).data,
+  validate: async (code, subtotal) => {
+    try {
+      return (await api.post('/auth/coupons/validate', { code, subtotal })).data;
+    } catch (error) {
+      throw error.response?.data || { message: error.message };
+    }
+  },
+  // admin
+  adminGetAll: async () => (await api.get('/auth/coupons/admin/all')).data,
+  adminCreate: async (body) => {
+    try { return (await api.post('/auth/coupons/admin', body)).data; }
+    catch (e) { throw e.response?.data || { message: e.message }; }
+  },
+  adminUpdate: async (id, body) => {
+    try { return (await api.put(`/auth/coupons/admin/${id}`, body)).data; }
+    catch (e) { throw e.response?.data || { message: e.message }; }
+  },
+  adminToggle: async (id) => (await api.patch(`/auth/coupons/admin/${id}/toggle`)).data,
+  adminDelete: async (id) => (await api.delete(`/auth/coupons/admin/${id}`)).data,
+  adminUsage: async (id) => (await api.get(`/auth/coupons/admin/${id}/usage`)).data,
 };
 
 export default api;

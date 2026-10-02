@@ -20,8 +20,7 @@ import { productService, reviewService } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 
-import ReviewForm from "../components/ReviewForm";
-import ReviewList from "../components/ReviewList";
+import ProductReviews from "../components/ProductReviews";
 import "../styles/ProductDetailPage.css";
 
 const ProductDetailPage = () => {
@@ -580,50 +579,7 @@ const handleBuyNow = () => {
 
         {/* Reviews Section */}
         <div className="pdp-reviews-section">
-          <h2 className="pdp-section-title">Customer Reviews</h2>
-
-          {/* Rating Summary */}
-          {totalReviews > 0 && (
-            <div className="pdp-rating-summary">
-              <div className="pdp-rating-big">
-                <span className="pdp-rating-number">
-                  {averageRating.toFixed(1)}
-                </span>
-                <div className="pdp-stars pdp-stars-lg">
-                  {renderStars(averageRating)}
-                </div>
-                <span className="pdp-rating-total">{totalReviews} Reviews</span>
-              </div>
-            </div>
-          )}
-
-          {user ? (
-            <>
-              <ReviewForm
-                productId={id}
-                onReviewAdded={fetchReviews}
-                existingReview={editingReview}
-              />
-              {!reviewsLoading && (
-                <ReviewList
-                  reviews={reviews}
-                  averageRating={averageRating}
-                  totalReviews={totalReviews}
-                  userId={user._id}
-                  onReviewDeleted={fetchReviews}
-                  onEditReview={setEditingReview}
-                />
-              )}
-            </>
-          ) : (
-            <div className="pdp-login-review">
-              <FaStar size={32} color="#fbbf24" />
-              <p>Share your experience with this product</p>
-              <Link to="/signin" className="pdp-btn-primary">
-                Login to Write a Review
-              </Link>
-            </div>
-          )}
+          <ProductReviews productId={id} user={user} onChanged={fetchReviews} />
         </div>
 
         {/* Related Products */}

@@ -1,3 +1,5 @@
+import CouponBox from "../components/CouponBox";
+import useAppliedCoupon from "../hooks/useAppliedCoupon";
 import React from "react";
 
 import { useCart } from "../context/CartContext";
@@ -17,7 +19,9 @@ const CartPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const totalAmount = getTotalPrice() * 1.18;
+  const subtotalValue = getTotalPrice();
+  const couponState = useAppliedCoupon(subtotalValue);
+  const totalAmount = couponState.total;
 
   // =========================
   // EMPTY CART
@@ -173,8 +177,15 @@ const CartPage = () => {
 
               <div className="summary-row">
                 <span>Subtotal</span>
-                <span>₹{getTotalPrice().toLocaleString()}</span>
+                <span>₹{subtotalValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
               </div>
+
+              {couponState.discount > 0 && (
+                <div className="summary-row" style={{ color: "#15803d", fontWeight: 700 }}>
+                  <span>Coupon ({couponState.applied.code})</span>
+                  <span>− ₹{couponState.discount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+                </div>
+              )}
 
               <div className="summary-row">
                 <span>Shipping</span>
@@ -183,13 +194,28 @@ const CartPage = () => {
 
               <div className="summary-row">
                 <span>Tax (18%)</span>
-                <span>₹{(getTotalPrice() * 0.18).toLocaleString()}</span>
+                <span>₹{couponState.gst.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
               </div>
 
               <div className="summary-row total">
                 <span>Total</span>
-                <span>₹{totalAmount.toLocaleString()}</span>
+                <span>₹{totalAmount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
               </div>
+
+              {couponState.notice && (
+                <p style={{ color: "#b45309", fontSize: 13, margin: "8px 0" }}>{couponState.notice}</p>
+              )}
+
+              {user && (
+                <div style={{ margin: "14px 0" }}>
+                  <CouponBox
+                    subtotal={subtotalValue}
+                    applied={couponState.applied}
+                    onApply={couponState.apply}
+                    onRemove={couponState.remove}
+                  />
+                </div>
+              )}
 
               {user ? (
                 <button

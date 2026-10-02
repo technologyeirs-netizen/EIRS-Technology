@@ -189,33 +189,51 @@ const generateBill = async (order) => {
 
       // ================= TOTAL =================
 
-      const subtotal = Number(order.totalPrice || 0);
-      const gst = subtotal - subtotal / 1.18;
+      const grandTotal = Number(order.totalPrice || 0);
+      const gst = grandTotal - grandTotal / 1.18;
+      const couponDiscount = Number(order.couponDiscount || 0);
+      const hasCoupon = couponDiscount > 0;
 
       y += 20;
 
-      doc.rect(300, y, 255, 90).fill(colors.light);
+      // Keep the totals box on the page
+      if (y > 650) {
+        doc.addPage();
+        y = 60;
+      }
 
-      doc.fillColor(colors.text).fontSize(10);
+      const rows = [];
+      if (hasCoupon) {
+        rows.push(["Items Total:", money(grandTotal - gst + couponDiscount), null]);
+        rows.push([`Coupon (${order.couponCode || "DISCOUNT"}):`, `- ${money(couponDiscount)}`, "#15803d"]);
+      }
+      rows.push(["Taxable Value:", money(grandTotal - gst), null]);
+      rows.push(["GST (18%):", money(gst), null]);
 
-      doc.text("Taxable Value:", 320, y + 15);
-      doc.text(money(subtotal - gst), 470, y + 15);
+      const boxHeight = rows.length * 20 + 55;
+      doc.rect(300, y, 255, boxHeight).fill(colors.light);
 
-      doc.text("GST (18%):", 320, y + 35);
-      doc.text(money(gst), 470, y + 35);
+      let ry = y + 12;
+      rows.forEach(([label, value, color]) => {
+        doc.font("Helvetica").fontSize(10).fillColor(color || colors.text);
+        doc.text(label, 320, ry);
+        doc.text(value, 470, ry);
+        ry += 20;
+      });
 
       doc
-        .moveTo(310, y + 55)
-        .lineTo(540, y + 55)
+        .moveTo(310, ry + 2)
+        .lineTo(540, ry + 2)
+        .strokeColor(colors.border)
         .stroke();
 
       doc
         .fontSize(12)
         .fillColor(colors.secondary)
         .font("Helvetica-Bold")
-        .text("Grand Total:", 320, y + 65);
+        .text("Grand Total:", 320, ry + 12);
 
-      doc.text(money(subtotal), 470, y + 65);
+      doc.text(money(grandTotal), 470, ry + 12);
 
       doc.end();
 

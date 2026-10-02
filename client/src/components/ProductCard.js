@@ -4,7 +4,6 @@ import { FaStar, FaHeart, FaShoppingCart } from 'react-icons/fa';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { useWishlist } from '../context/WishlistContext';
-import { reviewService } from '../services/api';
 import '../styles/ProductCard.css';
 
 const ProductCard = ({ product }) => {
@@ -53,24 +52,10 @@ const ProductCard = ({ product }) => {
     [stock]
   );
 
-  // Fetch average rating when product loads or productId changes
+  // Rating comes with the product list (one aggregated query on the server)
   useEffect(() => {
-    const fetchAverageRating = async () => {
-      try {
-        const reviewsData = await reviewService.getProductReviews(productId);
-        const rating = reviewsData?.averageRating || 0;
-        setAverageRating(Number(rating) || 0);
-      } catch (error) {
-        console.error('Error fetching product rating:', error);
-        // Fall back to product's rating field if available
-        setAverageRating(Number(product.rating) || 0);
-      }
-    };
-
-    if (productId) {
-      fetchAverageRating();
-    }
-  }, [productId, product.rating]);
+    setAverageRating(Number(product.rating) || 0);
+  }, [product.rating]);
 
   // Log stock data for debugging
   if (product && product._id) {
@@ -99,7 +84,7 @@ const ProductCard = ({ product }) => {
       addToCart({
         _id: productId,
         productName: displayName,
-        price: sellingPrice,
+        price: price, // list price - CartContext applies `discount` itself
         image: image,
         quantity: 1,
         stock: stockQuantity,
@@ -123,7 +108,7 @@ const handleAddToCart = useCallback(() => {
     addToCart({
       _id: productId,
       productName: displayName,
-      price: sellingPrice,
+      price: price, // list price - CartContext applies `discount` itself
       image: image,
       quantity: 1,
       stock: stockQuantity,
@@ -212,7 +197,11 @@ const handleAddToCart = useCallback(() => {
               <FaStar key={`star-${productId}-${i}`} className={i < Math.floor(Number(averageRating) || 0) ? 'filled' : 'empty'} />
             ))}
           </div>
-          <span className="rating-count">({(Number(averageRating) || 0).toFixed(1)})</span>
+          <span className="rating-count">
+            {product.reviewCount > 0
+              ? `${(Number(averageRating) || 0).toFixed(1)} (${product.reviewCount})`
+              : 'No reviews'}
+          </span>
         </div>
 
         {/* Pricing */}

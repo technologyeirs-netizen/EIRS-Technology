@@ -1,973 +1,380 @@
-﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  FaTimes,
-  FaSearch,
-  FaSortAmountDown,
-  FaTag,
-  FaThLarge,
-  FaChevronDown,
-  FaFilter,
-  FaBoxOpen,
+  FaSearch, FaTimes, FaFilter, FaBoxOpen, FaCheck, FaThLarge, FaSlidersH,
 } from "react-icons/fa";
 import { productService } from "../services/api";
-import { useAuth } from "../context/AuthContext";
-import { useCategoryFilter } from "../context/CategoryFilterContext";
-import CheckoutModal from "../components/CheckoutModal";
+import { getApiBaseUrl } from "../services/apiBaseUrl";
 import ProductCard from "../components/ProductCard";
-import CategorySidebar from "../components/CategorySidebar";
-import "../styles/ProductsPage.css";
+import axios from "axios";
 
-const ITEMS_PER_PAGE = 15;
-const FETCH_LIMIT = 50; // per-request size; we loop through ALL pages
-const MAX_PAGES = 100; // safety stop
-
-const API_ROOT = (
-  process.env.REACT_APP_API_URL || "http://localhost:5000"
-).replace(/\/$/, "");
-const API_BASE = `${API_ROOT}/api`;
+const PAGE_SIZE = 12;
 
 const SORT_OPTIONS = [
-  { value: "", label: "Relevance" },
+  { value: "", label: "Newest" },
   { value: "price-low-high", label: "Price: Low to High" },
   { value: "price-high-low", label: "Price: High to Low" },
   { value: "top-rated", label: "Top Rated" },
   { value: "most-popular", label: "Most Popular" },
 ];
 
-/* ----------------------------- helpers ----------------------------- */
-
-const norm = (v) => String(v ?? "").trim().toLowerCase();
-
-// Response kisi bhi shape mein ho, array nikaal do
-const toArray = (res) => {
-  if (Array.isArray(res)) return res;
-  if (Array.isArray(res?.data)) return res.data;
-  if (Array.isArray(res?.data?.data)) return res.data.data;
-  if (Array.isArray(res?.products)) return res.products;
-  return [];
+const norm = (v) => String(v || "").trim().toLowerCase();
+const OBJECT_ID = /^[a-f0-9]{24}$/i;
+const sellingPrice = (p) => {
+  const price = Number(p.price) || 0;
+  const d = Number(p.discount) || 0;
+  return d > 0 ? price * (1 - d / 100) : price;
 };
 
-// Backend se total / totalPages nikaalo (agar de raha ho)
-const getMeta = (res) => {
-  const src = res?.pagination || res?.data?.pagination || res || {};
-  return {
-    total: src.total ?? src.totalProducts ?? src.totalItems ?? res?.total ?? null,
-    totalPages: src.totalPages ?? src.pages ?? res?.totalPages ?? null,
-  };
-};
-
-// Saare pages fetch karke ek array bana do (duplicates hata ke)
-const fetchAllPages = async (fetcher) => {
-  const map = new Map();
-  let page = 1;
-
-  while (page <= MAX_PAGES) {
-    const res = await fetcher(page, FETCH_LIMIT);
-    const arr = toArray(res);
-    if (arr.length === 0) break;
-
-    const before = map.size;
-    arr.forEach((p) => map.set(String(p._id ?? `${page}-${map.size}`), p));
-
-    // Naya kuch nahi aaya => backend page ignore kar raha hai, ruk jao
-    if (map.size === before) break;
-
-    const { total, totalPages } = getMeta(res);
-    if (totalPages && page >= totalPages) break;
-    if (total && map.size >= total) break;
-
-    page += 1;
-  }
-  return Array.from(map.values());
-};
-
-// Sabse reliable tareeka: backend ko seedha hit karo, limit=1000 => saare
-// products ek hi request mein (productService / pagination / count cache bypass)
-const fetchEverything = async (fallbackFetcher) => {
-  let direct = [];
-  let directTotal = null;
-
-  try {
-    const res = await fetch(`${API_BASE}/products?limit=1000&_t=${Date.now()}`, {
-      cache: "no-store",
-    });
-    if (res.ok) {
-      const json = await res.json();
-      direct = toArray(json);
-      directTotal = getMeta(json).total;
-    }
-  } catch {
-    // fallback neeche
-  }
-
-  console.log("DIRECT FETCH:", direct.length, "backend total:", directTotal);
-
-  // Direct fetch ne poora data diya to yahin khatam
-  if (direct.length > 0 && (!directTotal || direct.length >= directTotal)) {
-    return direct;
-  }
-
-  // Warna page-by-page fallback
-  const paged = await fetchAllPages(fallbackFetcher);
-  console.log("PAGED FETCH:", paged.length);
-  return paged.length >= direct.length ? paged : direct;
-};
-
-// Product ki category/subcategory populated object ho ya plain id/name -
-// dono cases ke liye comparable keys nikaalo
-const refKeys = (ref) => {
-  if (!ref) return [];
-  if (typeof ref === "object")
-    return [ref._id, ref.name].filter(Boolean).map(norm);
-  return [norm(ref)];
-};
-
-/* ----------------------------- component ----------------------------- */
+const Skeleton = () => (
+  <div className="overflow-hidden rounded-2xl bg-white shadow-premium ring-1 ring-slate-900/5">
+    <div className="h-48 animate-pulse bg-slate-100" />
+    <div className="space-y-3 p-4">
+      <div className="h-4 w-3/4 animate-pulse rounded bg-slate-100" />
+      <div className="h-3 w-1/2 animate-pulse rounded bg-slate-100" />
+      <div className="h-6 w-1/3 animate-pulse rounded bg-slate-100" />
+    </div>
+  </div>
+);
 
 const ProductsPage = () => {
-  const [searchParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [categories, setCategories] = useState([]);
-  const [subcategoriesData, setSubcategoriesData] = useState([]);
-  const { user } = useAuth();
-  const { isSidebarOpen, closeSidebar } = useCategoryFilter();
-
-  const [products, setProducts] = useState([]);
+  const [items, setItems] = useState([]); // everything for current category + search
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState(() => {
-    const saved = sessionStorage.getItem("pp_currentPage");
-    const savedPage = saved ? parseInt(saved, 10) : 1;
-    return Number.isInteger(savedPage) && savedPage > 0 ? savedPage : 1;
-  });
+  const [error, setError] = useState("");
+  const [visible, setVisible] = useState(PAGE_SIZE);
+  const [drawer, setDrawer] = useState(false);
 
-  const [searchTerm, setSearchTerm] = useState("");
-  // selectedCategory: normally category _id (URL se name aaye to categories
-  // load hone ke baad _id mein convert ho jata hai)
-  const [selectedCategory, setSelectedCategory] = useState(() => {
-    const c = searchParams.get("category");
-    return c ? decodeURIComponent(c) : "";
-  });
-  const [selectedSubcategory, setSelectedSubcategory] = useState(() => {
-    const s = searchParams.get("subcategory");
-    return s ? decodeURIComponent(s) : "";
-  });
-  const [selectedSubmenu, setSelectedSubmenu] = useState(() => {
-    const sm = searchParams.get("submenu");
-    return sm ? decodeURIComponent(sm) : "";
-  });
-  const [selectedBrand, setSelectedBrand] = useState("");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
-  const [sortBy, setSortBy] = useState("");
-  const [selectedSidebarCategories, setSelectedSidebarCategories] = useState(
-    new Set(),
+  // URL is the single source of truth
+  const categoryParam = params.get("category") || params.get("categoryId") || "";
+  const subcategory = params.get("subcategory") || "";
+  const brand = params.get("brand") || "";
+  const search = params.get("search") || "";
+  const sort = params.get("sort") || "";
+  const minPrice = params.get("minPrice") || "";
+  const maxPrice = params.get("maxPrice") || "";
+  const inStock = params.get("inStock") === "true";
+
+  const [searchInput, setSearchInput] = useState(search);
+  useEffect(() => setSearchInput(search), [search]);
+
+  const update = useCallback(
+    (patch, { keepPaging = false } = {}) => {
+      const next = new URLSearchParams(params);
+      next.delete("categoryId"); // legacy param
+      Object.entries(patch).forEach(([k, v]) => {
+        if (v === "" || v === null || v === undefined || v === false) next.delete(k);
+        else next.set(k, String(v));
+      });
+      if (!keepPaging) setVisible(PAGE_SIZE);
+      setParams(next, { replace: true });
+    },
+    [params, setParams]
   );
-  const [isFromSidebar] = useState(
-    () => searchParams.get("fromSidebar") === "true",
-  );
 
-  const [openDropdown, setOpenDropdown] = useState(null);
-  const [showPricePanel, setShowPricePanel] = useState(false);
+  // categories (for chips)
+  useEffect(() => {
+    const root = getApiBaseUrl().replace(/\/$/, "");
+    axios
+      .get(`${root}/api/categories`)
+      .then((res) => {
+        const arr = res.data?.data || res.data?.categories || (Array.isArray(res.data) ? res.data : []);
+        setCategories(arr);
+      })
+      .catch(() => setCategories([]));
+  }, []);
 
-  const [showCheckout, setShowCheckout] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [buyNowQuantity, setBuyNowQuantity] = useState(1);
+  // current category object (URL may carry an id OR a name)
+  const activeCategory = useMemo(() => {
+    if (!categoryParam) return null;
+    return (
+      categories.find((c) => c._id === categoryParam) ||
+      categories.find((c) => norm(c.name) === norm(categoryParam)) ||
+      null
+    );
+  }, [categories, categoryParam]);
 
-  /* ---------------------------- data fetching ---------------------------- */
-
+  // products: the SERVER filters by category/search so we always get every product of it
   const fetchProducts = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      const all = await fetchEverything((p, l) =>
-        productService.getProductsFresh(p, l),
-      );
-      console.log("TOTAL PRODUCTS LOADED:", all.length);
-      setProducts(all);
-    } catch {
-      setProducts([]);
+      const res = await productService.queryProducts({
+        category: categoryParam,
+        search,
+      });
+      setItems(Array.isArray(res?.data) ? res.data : []);
+    } catch (e) {
+      setError("Could not load products. Please try again.");
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  const fetchProductsFresh = useCallback(async () => {
-    try {
-      const all = await fetchEverything((p, l) =>
-        productService.getProductsFresh(p, l),
-      );
-      if (all.length > 0) {
-        setProducts(all);
-        localStorage.removeItem("products_dirty");
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const fetchCategoriesAndSubcategories = useCallback(async () => {
-    try {
-      const [catRes, subRes] = await Promise.all([
-        productService.getCategories
-          ? productService.getCategories()
-          : fetch(`${API_BASE}/categories`).then((res) => res.json()),
-        productService.getSubcategories
-          ? productService.getSubcategories()
-          : fetch(`${API_BASE}/subcategories`).then((res) => res.json()),
-      ]);
-
-      setCategories(toArray(catRes));
-      setSubcategoriesData(toArray(subRes));
-    } catch {
-      // ignore
-    }
-  }, []);
+  }, [categoryParam, search]);
 
   useEffect(() => {
     fetchProducts();
-    fetchCategoriesAndSubcategories();
+  }, [fetchProducts]);
 
-    const interval = setInterval(fetchProductsFresh, 5 * 60 * 1000);
+  // debounce search box -> URL
+  const searchTimer = useRef();
+  const onSearchChange = (v) => {
+    setSearchInput(v);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => update({ search: v.trim() }), 400);
+  };
 
-    const handleVisibility = () => {
-      if (
-        document.visibilityState === "visible" &&
-        localStorage.getItem("products_dirty") === "true"
-      ) {
-        fetchProductsFresh();
-      }
-    };
-    const handleStorage = (e) => {
-      if (e.key === "products_dirty" && e.newValue === "true") {
-        fetchProductsFresh();
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("storage", handleStorage);
-
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("storage", handleStorage);
-    };
-  }, [fetchProducts, fetchProductsFresh, fetchCategoriesAndSubcategories]);
-
-  /* ---------------------------- URL -> state ---------------------------- */
-
-  useEffect(() => {
-    const searchQuery = searchParams.get("search");
-    setSearchTerm(searchQuery ? decodeURIComponent(searchQuery) : "");
-
-    const categoryFromUrl = searchParams.get("category");
-    if (categoryFromUrl) {
-      setSelectedCategory(decodeURIComponent(categoryFromUrl));
-
-      const sub = searchParams.get("subcategory");
-      setSelectedSubcategory(sub ? decodeURIComponent(sub) : "");
-
-      const submenu = searchParams.get("submenu");
-      setSelectedSubmenu(submenu ? decodeURIComponent(submenu) : "");
-
-      setSelectedBrand("");
-      setSelectedSidebarCategories(new Set());
-    } else {
-      setSelectedCategory("");
-      setSelectedSubcategory("");
-      setSelectedSubmenu("");
-    }
-  }, [searchParams]);
-
-  // URL se category NAME aaya ho to categories load hone par _id mein badlo
-  useEffect(() => {
-    if (!selectedCategory || categories.length === 0) return;
-    const match = categories.find(
-      (c) =>
-        String(c._id) === String(selectedCategory) ||
-        norm(c.name) === norm(selectedCategory),
-    );
-    if (match && String(match._id) !== String(selectedCategory)) {
-      setSelectedCategory(String(match._id));
-    }
-  }, [categories, selectedCategory]);
-
-  /* ---------------------------- derived data ---------------------------- */
-
-  const selectedCategoryObj = useMemo(() => {
-    if (!selectedCategory) return null;
-    return (
-      categories.find(
-        (c) =>
-          String(c._id) === String(selectedCategory) ||
-          norm(c.name) === norm(selectedCategory),
-      ) || null
-    );
-  }, [categories, selectedCategory]);
-
-  // Selected category ke subcategories (dropdown ke liye)
+  // facets built from the category's products
   const subcategories = useMemo(() => {
-    if (!selectedCategoryObj) return [];
-    return subcategoriesData.filter((sub) => {
-      const catId =
-        typeof sub.category === "object" ? sub.category?._id : sub.category;
-      return String(catId) === String(selectedCategoryObj._id);
+    const map = new Map();
+    items.forEach((p) => {
+      const n = (p.subcategory || "").trim();
+      if (n) map.set(n, (map.get(n) || 0) + 1);
     });
-  }, [selectedCategoryObj, subcategoriesData]);
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [items]);
 
-  const uniqueBrands = useMemo(
-    () => [...new Set(products.map((p) => p.brand).filter(Boolean))].sort(),
-    [products],
-  );
-
-  const filteredProducts = useMemo(() => {
-    let result = [...products];
-
-    // Sidebar multi-select categories (name ya id dono chalega)
-    if (selectedSidebarCategories.size > 0) {
-      const wanted = new Set(
-        Array.from(selectedSidebarCategories).map((c) => norm(c)),
-      );
-      result = result.filter((p) =>
-        refKeys(p.category).some((k) => wanted.has(k)),
-      );
-    }
-
-    // Category
-    if (selectedCategory) {
-      const keys = new Set(
-        selectedCategoryObj
-          ? [selectedCategoryObj._id, selectedCategoryObj.name]
-              .filter(Boolean)
-              .map(norm)
-          : [norm(selectedCategory)],
-      );
-      result = result.filter((p) =>
-        refKeys(p.category).some((k) => keys.has(k)),
-      );
-    }
-
-    // Subcategory (name se select hota hai; product mein name/id/object kuch bhi ho)
-    if (selectedSubcategory) {
-      const subObj = subcategoriesData.find(
-        (s) => norm(s.name) === norm(selectedSubcategory),
-      );
-      const keys = new Set(
-        [norm(selectedSubcategory), subObj ? norm(subObj._id) : null].filter(
-          Boolean,
-        ),
-      );
-      result = result.filter((p) =>
-        refKeys(p.subcategory).some((k) => keys.has(k)),
-      );
-    }
-
-    // Submenu
-    if (selectedSubmenu) {
-      result = result.filter(
-        (p) => p.submenu && norm(p.submenu) === norm(selectedSubmenu),
-      );
-    }
-
-    // Brand
-    if (!isFromSidebar && selectedBrand) {
-      result = result.filter((p) => p.brand && norm(p.brand) === norm(selectedBrand));
-    }
-
-    // Search
-    if (!isFromSidebar && searchTerm.trim()) {
-      const q = norm(searchTerm);
-      result = result.filter((p) => {
-        const catName =
-          typeof p.category === "object" ? p.category?.name : p.category;
-        return (
-          norm(p.productName).includes(q) ||
-          norm(p.description).includes(q) ||
-          norm(p.brand).includes(q) ||
-          norm(catName).includes(q)
-        );
+  const brands = useMemo(() => {
+    const map = new Map();
+    items
+      .filter((p) => !subcategory || norm(p.subcategory) === norm(subcategory))
+      .forEach((p) => {
+        const n = (p.brand || "").trim();
+        if (n) map.set(n, (map.get(n) || 0) + 1);
       });
-    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [items, subcategory]);
 
-    // Price
-    if (minPrice || maxPrice) {
-      const min = minPrice ? parseFloat(minPrice) : 0;
-      const max = maxPrice ? parseFloat(maxPrice) : Infinity;
-      result = result.filter((p) => {
-        const price = parseFloat(p.price) || 0;
-        return price >= min && price <= max;
-      });
-    }
-
-    // Sort
-    switch (sortBy) {
-      case "price-low-high":
-        result.sort((a, b) => (parseFloat(a.price) || 0) - (parseFloat(b.price) || 0));
-        break;
-      case "price-high-low":
-        result.sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
-        break;
-      case "most-popular":
-        result.sort((a, b) => {
-          const d = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
-          return d !== 0 ? d : (b.reviewCount || 0) - (a.reviewCount || 0);
-        });
-        break;
-      case "top-rated":
-        result.sort((a, b) => (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0));
-        break;
-      default:
-        break;
-    }
-
-    return result;
-  }, [
-    products,
-    subcategoriesData,
-    searchTerm,
-    selectedCategory,
-    selectedCategoryObj,
-    selectedSubcategory,
-    selectedSubmenu,
-    selectedBrand,
-    selectedSidebarCategories,
-    minPrice,
-    maxPrice,
-    sortBy,
-    isFromSidebar,
-  ]);
-
-  /* ---------------------------- pagination ---------------------------- */
-
-  // Filter/search/sort badalne par hi page 1 par jao
-  const filterFingerprint = JSON.stringify({
-    searchTerm,
-    selectedCategory: selectedCategoryObj?._id || selectedCategory,
-    selectedSubcategory,
-    selectedSubmenu,
-    selectedBrand,
-    sidebar: Array.from(selectedSidebarCategories).sort(),
-    minPrice,
-    maxPrice,
-    sortBy,
-  });
-  const prevFilterFingerprintRef = useRef(null);
-  useEffect(() => {
-    if (prevFilterFingerprintRef.current === null) {
-      prevFilterFingerprintRef.current = filterFingerprint;
-      return;
-    }
-    if (prevFilterFingerprintRef.current !== filterFingerprint) {
-      prevFilterFingerprintRef.current = filterFingerprint;
-      setCurrentPage(1);
-    }
-  }, [filterFingerprint]);
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem("pp_currentPage", String(currentPage));
-    } catch {
-      // ignore
-    }
-  }, [currentPage]);
-
-  const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE);
-
-  // Products load hone se pehle page clamp mat karo
-  useEffect(() => {
-    if (!loading && totalPages > 0 && currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [totalPages, currentPage, loading]);
-
-  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const paginatedProducts = useMemo(
-    () => filteredProducts.slice(startIndex, startIndex + ITEMS_PER_PAGE),
-    [filteredProducts, startIndex],
-  );
-
-  /* ---------------------------- actions ---------------------------- */
-
-  const activeFiltersCount = [
-    selectedCategory,
-    selectedSubcategory,
-    selectedBrand,
-    minPrice,
-    maxPrice,
-    sortBy,
-  ].filter(Boolean).length;
-
-  const clearFilters = () => {
-    setSearchTerm("");
-    setSelectedCategory("");
-    setSelectedSubcategory("");
-    setSelectedBrand("");
-    setSelectedSubmenu("");
-    setMinPrice("");
-    setMaxPrice("");
-    setSortBy("");
-    setSelectedSidebarCategories(new Set());
-    setCurrentPage(1);
-    setOpenDropdown(null);
-    setShowPricePanel(false);
-  };
-
-  const handleSidebarCategorySelect = useCallback((categoryName) => {
-    setSelectedSidebarCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(categoryName)) next.delete(categoryName);
-      else next.add(categoryName);
-      return next;
+  const filtered = useMemo(() => {
+    let list = items.filter((p) => {
+      if (subcategory && norm(p.subcategory) !== norm(subcategory)) return false;
+      if (brand && norm(p.brand) !== norm(brand)) return false;
+      if (inStock && !(p.stock > 0)) return false;
+      const price = sellingPrice(p);
+      if (minPrice !== "" && price < Number(minPrice)) return false;
+      if (maxPrice !== "" && price > Number(maxPrice)) return false;
+      return true;
     });
-    setCurrentPage(1);
-  }, []);
+    const by = {
+      "price-low-high": (a, b) => sellingPrice(a) - sellingPrice(b),
+      "price-high-low": (a, b) => sellingPrice(b) - sellingPrice(a),
+      "top-rated": (a, b) => (b.rating || 0) - (a.rating || 0) || (b.reviewCount || 0) - (a.reviewCount || 0),
+      "most-popular": (a, b) => (b.reviewCount || 0) - (a.reviewCount || 0),
+    }[sort];
+    return by ? [...list].sort(by) : list;
+  }, [items, subcategory, brand, inStock, minPrice, maxPrice, sort]);
 
-  const toggleDropdown = (name) => {
-    setOpenDropdown((prev) => (prev === name ? null : name));
-    if (name !== "price") setShowPricePanel(false);
-  };
-  const stopPropagation = (e) => e.stopPropagation();
+  const activeFilterCount = [subcategory, brand, minPrice, maxPrice, inStock ? "1" : ""].filter(Boolean).length;
+  const title = activeCategory?.name || (categoryParam && !OBJECT_ID.test(categoryParam) ? categoryParam : "All Products");
+  const shown = filtered.slice(0, visible);
 
-  useEffect(() => {
-    const handler = () => {
-      setOpenDropdown(null);
-      setShowPricePanel(false);
-    };
-    document.addEventListener("click", handler);
-    return () => document.removeEventListener("click", handler);
-  }, []);
+  const clearFilters = () => update({ subcategory: "", brand: "", minPrice: "", maxPrice: "", inStock: "" });
 
-  const activeChips = useMemo(() => {
-    const chips = [];
-    if (selectedCategory) {
-      chips.push({
-        label: selectedCategoryObj?.name || selectedCategory,
-        clear: () => {
-          setSelectedCategory("");
-          setSelectedSubcategory("");
-        },
-      });
-    }
-    if (selectedSubcategory)
-      chips.push({
-        label: selectedSubcategory,
-        clear: () => setSelectedSubcategory(""),
-      });
-    if (selectedBrand)
-      chips.push({ label: selectedBrand, clear: () => setSelectedBrand("") });
-    if (minPrice || maxPrice)
-      chips.push({
-        label: `Rs.${minPrice || "0"} - Rs.${maxPrice || "max"}`,
-        clear: () => {
-          setMinPrice("");
-          setMaxPrice("");
-        },
-      });
-    if (sortBy)
-      chips.push({
-        label: SORT_OPTIONS.find((o) => o.value === sortBy)?.label,
-        clear: () => setSortBy(""),
-      });
-    return chips;
-  }, [
-    selectedCategory,
-    selectedCategoryObj,
-    selectedSubcategory,
-    selectedBrand,
-    minPrice,
-    maxPrice,
-    sortBy,
-  ]);
-
-  /* ---------------------------- render ---------------------------- */
-
-  return (
-    <main className="pp-page">
-      <div className={`left-sidebar-filters ${isSidebarOpen ? "open" : ""}`}>
-        <div className="sidebar-header">
-          <h3>Categories & Filters</h3>
-          <button className="close-sidebar-btn" onClick={closeSidebar}>
-            <FaTimes />
-          </button>
-        </div>
-        <CategorySidebar onCategorySelect={handleSidebarCategorySelect} />
-      </div>
-      {isSidebarOpen && (
-        <div className="sidebar-overlay" onClick={closeSidebar} />
+  const FilterPanel = (
+    <div className="space-y-7">
+      {subcategories.length > 0 && (
+        <section>
+          <h4 className="mb-3 text-xs font-bold uppercase tracking-[.14em] text-slate-500">Sub-category</h4>
+          <ul className="space-y-1">
+            <li>
+              <button onClick={() => update({ subcategory: "", brand: "" })} className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold transition ${!subcategory ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-50"}`}>
+                All <span className="text-xs text-slate-400">{items.length}</span>
+              </button>
+            </li>
+            {subcategories.map(([name, n]) => (
+              <li key={name}>
+                <button onClick={() => update({ subcategory: name, brand: "" })} className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${norm(subcategory) === norm(name) ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-50"}`}>
+                  <span className="truncate">{name}</span> <span className="ml-2 text-xs text-slate-400">{n}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
-      <div className="pp-wrapper">
-        {/* Page Header */}
-        <div className="pp-page-header">
-          <div className="pp-page-header-inner">
-            <div className="pp-page-title-group">
-              <FaThLarge className="pp-page-title-icon" />
-              <div>
-                <h1 className="pp-page-title">All Products</h1>
-                <p className="pp-page-subtitle">
-                  Explore our complete security solutions catalog
-                </p>
-              </div>
-            </div>
+      {brands.length > 0 && (
+        <section>
+          <h4 className="mb-3 text-xs font-bold uppercase tracking-[.14em] text-slate-500">Brand</h4>
+          <div className="flex flex-wrap gap-2">
+            {brands.map(([name, n]) => {
+              const on = norm(brand) === norm(name);
+              return (
+                <button key={name} onClick={() => update({ brand: on ? "" : name })} className={`rounded-full px-3 py-1.5 text-xs font-bold ring-1 transition ${on ? "bg-brand-600 text-white ring-brand-600" : "bg-white text-slate-600 ring-slate-200 hover:ring-brand-300"}`}>
+                  {name} <span className={on ? "text-brand-100" : "text-slate-400"}>({n})</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <h4 className="mb-3 text-xs font-bold uppercase tracking-[.14em] text-slate-500">Price (₹)</h4>
+        <div className="flex items-center gap-2">
+          <input type="number" min="0" placeholder="Min" defaultValue={minPrice} key={`min-${minPrice}`} onBlur={(e) => update({ minPrice: e.target.value })} className="input-premium" style={{ margin: 0 }} />
+          <span className="text-slate-300">–</span>
+          <input type="number" min="0" placeholder="Max" defaultValue={maxPrice} key={`max-${maxPrice}`} onBlur={(e) => update({ maxPrice: e.target.value })} className="input-premium" style={{ margin: 0 }} />
+        </div>
+      </section>
+
+      <label className="flex cursor-pointer items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+        <span className="text-sm font-semibold text-slate-700">In stock only</span>
+        <span className={`relative h-6 w-11 rounded-full transition ${inStock ? "bg-brand-600" : "bg-slate-300"}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${inStock ? "left-[22px]" : "left-0.5"}`} />
+          <input type="checkbox" className="sr-only" checked={inStock} onChange={(e) => update({ inStock: e.target.checked })} />
+        </span>
+      </label>
+
+      {activeFilterCount > 0 && (
+        <button onClick={clearFilters} className="btn-soft w-full"><FaTimes /> Clear filters</button>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="tw-root min-h-screen bg-slate-50 font-sans text-slate-800">
+      {/* Hero */}
+      <div className="relative overflow-hidden bg-gradient-to-br from-ink-900 via-ink-800 to-brand-900">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand-500/30 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 left-10 h-72 w-72 rounded-full bg-violet-500/20 blur-3xl" />
+        <div className="relative mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-14">
+          <p className="mb-2 text-xs font-bold uppercase tracking-[.2em] text-brand-300">Shop</p>
+          <h1 className="text-3xl font-extrabold tracking-tight !text-white sm:text-4xl" style={{ margin: 0, color: "#fff" }}>{title}</h1>
+          <p className="mt-2 text-sm text-slate-300">
+            {loading ? "Loading products…" : `${filtered.length} product${filtered.length === 1 ? "" : "s"} found`}
+          </p>
+
+          <div className="relative mt-6 max-w-xl">
+            <FaSearch className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              value={searchInput}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search products, brands, model no…"
+              className="w-full rounded-2xl border-0 bg-white/95 py-3.5 pl-11 pr-4 text-sm text-slate-900 shadow-premium-lg outline-none ring-1 ring-white/20 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-400"
+              style={{ margin: 0 }}
+            />
           </div>
         </div>
+      </div>
 
-        {/* Filter Toolbar */}
-        {!isFromSidebar && (
-          <div className="pp-filter-bar" onClick={stopPropagation}>
-            <div className="pp-filter-bar-left">
-              {/* Search */}
-              <div className="pp-search-wrap">
-                <FaSearch className="pp-search-icon" />
-                <input
-                  type="text"
-                  placeholder="Search products..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pp-search-input"
-                />
-                {searchTerm && (
-                  <button
-                    className="pp-search-clear"
-                    onClick={() => setSearchTerm("")}
-                  >
-                    <FaTimes />
-                  </button>
-                )}
-              </div>
-
-              {/* Category */}
-              <div className="pp-dropdown-wrap" onClick={stopPropagation}>
-                <button
-                  className={`pp-filter-btn ${selectedCategory ? "pp-filter-btn--active" : ""}`}
-                  onClick={() => toggleDropdown("category")}
-                >
-                  <FaTag /> {selectedCategoryObj?.name || "Category"}
-                  <FaChevronDown
-                    className={`pp-chevron ${openDropdown === "category" ? "pp-chevron--open" : ""}`}
-                  />
-                </button>
-                {openDropdown === "category" && (
-                  <div className="pp-dropdown-menu">
-                    <div
-                      className="pp-dropdown-item"
-                      onClick={() => {
-                        setSelectedCategory("");
-                        setSelectedSubcategory("");
-                        setOpenDropdown(null);
-                      }}
-                    >
-                      All Categories
-                    </div>
-                    {categories.map((cat) => (
-                      <div
-                        key={cat._id}
-                        className={`pp-dropdown-item ${
-                          selectedCategoryObj?._id === cat._id
-                            ? "pp-dropdown-item--active"
-                            : ""
-                        }`}
-                        onClick={() => {
-                          setSelectedCategory(String(cat._id));
-                          setSelectedSubcategory("");
-                          setOpenDropdown(null);
-                        }}
-                      >
-                        {cat.name}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Subcategory */}
-              {selectedCategory && subcategories.length > 0 && (
-                <div className="pp-dropdown-wrap" onClick={stopPropagation}>
-                  <button
-                    className={`pp-filter-btn ${selectedSubcategory ? "pp-filter-btn--active" : ""}`}
-                    onClick={() => toggleDropdown("subcategory")}
-                  >
-                    {selectedSubcategory || "Subcategory"}{" "}
-                    <FaChevronDown
-                      className={`pp-chevron ${openDropdown === "subcategory" ? "pp-chevron--open" : ""}`}
-                    />
-                  </button>
-                  {openDropdown === "subcategory" && (
-                    <div className="pp-dropdown-menu">
-                      <div
-                        className="pp-dropdown-item"
-                        onClick={() => {
-                          setSelectedSubcategory("");
-                          setOpenDropdown(null);
-                        }}
-                      >
-                        All Subcategories
-                      </div>
-                      {subcategories.map((sub) => (
-                        <div
-                          key={sub._id}
-                          className={`pp-dropdown-item ${
-                            norm(selectedSubcategory) === norm(sub.name)
-                              ? "pp-dropdown-item--active"
-                              : ""
-                          }`}
-                          onClick={() => {
-                            setSelectedSubcategory(sub.name);
-                            setOpenDropdown(null);
-                          }}
-                        >
-                          {sub.name}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Brand */}
-              {uniqueBrands.length > 0 && (
-                <div className="pp-dropdown-wrap" onClick={stopPropagation}>
-                  <button
-                    className={`pp-filter-btn ${selectedBrand ? "pp-filter-btn--active" : ""}`}
-                    onClick={() => toggleDropdown("brand")}
-                  >
-                    {selectedBrand || "Brand"}{" "}
-                    <FaChevronDown
-                      className={`pp-chevron ${openDropdown === "brand" ? "pp-chevron--open" : ""}`}
-                    />
-                  </button>
-                  {openDropdown === "brand" && (
-                    <div className="pp-dropdown-menu">
-                      <div
-                        className="pp-dropdown-item"
-                        onClick={() => {
-                          setSelectedBrand("");
-                          setOpenDropdown(null);
-                        }}
-                      >
-                        All Brands
-                      </div>
-                      {uniqueBrands.map((b) => (
-                        <div
-                          key={b}
-                          className={`pp-dropdown-item ${selectedBrand === b ? "pp-dropdown-item--active" : ""}`}
-                          onClick={() => {
-                            setSelectedBrand(b);
-                            setOpenDropdown(null);
-                          }}
-                        >
-                          {b}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Price */}
-              <div className="pp-dropdown-wrap" onClick={stopPropagation}>
-                <button
-                  className={`pp-filter-btn ${minPrice || maxPrice ? "pp-filter-btn--active" : ""}`}
-                  onClick={() => setShowPricePanel((prev) => !prev)}
-                >
-                  Price{" "}
-                  <FaChevronDown
-                    className={`pp-chevron ${showPricePanel ? "pp-chevron--open" : ""}`}
-                  />
-                </button>
-                {showPricePanel && (
-                  <div className="pp-price-panel">
-                    <p className="pp-price-panel-title">Price Range (Rs.)</p>
-                    <div className="pp-price-row">
-                      <input
-                        type="number"
-                        placeholder="Min"
-                        value={minPrice}
-                        onChange={(e) => setMinPrice(e.target.value)}
-                        className="pp-price-input"
-                        min="0"
-                      />
-                      <span className="pp-price-sep">to</span>
-                      <input
-                        type="number"
-                        placeholder="Max"
-                        value={maxPrice}
-                        onChange={(e) => setMaxPrice(e.target.value)}
-                        className="pp-price-input"
-                        min="0"
-                      />
-                    </div>
-                    <button
-                      className="pp-price-apply-btn"
-                      onClick={() => setShowPricePanel(false)}
-                    >
-                      Apply
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="pp-filter-bar-right">
-              {/* Sort */}
-              <div
-                className="pp-dropdown-wrap pp-sort-wrap"
-                onClick={stopPropagation}
+      {/* Category chips */}
+      <div className="relative z-10 border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 py-3 sm:px-6 [scrollbar-width:none]">
+          <button
+            onClick={() => update({ category: "", subcategory: "", brand: "" })}
+            className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-bold transition ${!categoryParam ? "bg-brand-600 text-white shadow-glow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+          >
+            <FaThLarge className="text-xs" /> All
+          </button>
+          {categories.map((c) => {
+            const on = activeCategory?._id === c._id;
+            return (
+              <button
+                key={c._id}
+                onClick={() => update({ category: c._id, subcategory: "", brand: "" })}
+                className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition ${on ? "bg-brand-600 text-white shadow-glow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
               >
-                <button
-                  className={`pp-filter-btn pp-sort-btn ${sortBy ? "pp-filter-btn--active" : ""}`}
-                  onClick={() => toggleDropdown("sort")}
-                >
-                  <FaSortAmountDown />
-                  {SORT_OPTIONS.find((o) => o.value === sortBy)?.label ||
-                    "Sort By"}
-                  <FaChevronDown
-                    className={`pp-chevron ${openDropdown === "sort" ? "pp-chevron--open" : ""}`}
-                  />
-                </button>
-                {openDropdown === "sort" && (
-                  <div className="pp-dropdown-menu pp-dropdown-menu--right">
-                    {SORT_OPTIONS.map((opt) => (
-                      <div
-                        key={opt.value}
-                        className={`pp-dropdown-item ${sortBy === opt.value ? "pp-dropdown-item--active" : ""}`}
-                        onClick={() => {
-                          setSortBy(opt.value);
-                          setOpenDropdown(null);
-                        }}
-                      >
-                        {opt.label}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                {c.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-              {activeFiltersCount > 0 && (
-                <button className="pp-clear-btn" onClick={clearFilters}>
-                  <FaFilter /> Clear ({activeFiltersCount})
-                </button>
-              )}
-            </div>
+      <div className="mx-auto flex max-w-7xl gap-8 px-4 py-8 sm:px-6">
+        {/* Sidebar desktop */}
+        <aside className="hidden w-64 shrink-0 lg:block">
+          <div className="card-premium sticky top-36 max-h-[calc(100vh-10rem)] overflow-y-auto p-5">
+            <div className="mb-5 flex items-center gap-2 text-sm font-extrabold text-slate-900"><FaSlidersH className="text-brand-600" /> Filters</div>
+            {FilterPanel}
           </div>
-        )}
+        </aside>
 
-        {/* Active Chips */}
-        {activeChips.length > 0 && (
-          <div className="pp-chips-bar">
-            <span className="pp-chips-label">Active:</span>
-            {activeChips.map((chip, i) => (
-              <span key={i} className="pp-chip">
-                {chip.label}
-                <button className="pp-chip-remove" onClick={chip.clear}>
-                  <FaTimes />
-                </button>
-              </span>
-            ))}
-            <button className="pp-chips-clear-all" onClick={clearFilters}>
-              Clear All
+        <main className="min-w-0 flex-1">
+          {/* Toolbar */}
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <button onClick={() => setDrawer(true)} className="btn-soft lg:hidden">
+              <FaFilter /> Filters{activeFilterCount > 0 && <span className="grid h-5 w-5 place-items-center rounded-full bg-brand-600 text-[11px] text-white">{activeFilterCount}</span>}
             </button>
-          </div>
-        )}
-
-        {/* Products Grid */}
-        <section className="pp-grid-section">
-          <div className="pp-results-bar">
-            <p className="pp-results-text">
-              {loading ? (
-                "Loading..."
-              ) : filteredProducts.length === 0 ? (
-                "No products"
-              ) : (
-                <>
-                  Showing{" "}
-                  <strong>
-                    {startIndex + 1}–
-                    {Math.min(
-                      startIndex + ITEMS_PER_PAGE,
-                      filteredProducts.length,
-                    )}
-                  </strong>{" "}
-                  of <strong>{filteredProducts.length}</strong> products
-                </>
-              )}
-            </p>
+            <div className="hidden flex-wrap items-center gap-2 lg:flex">
+              {subcategory && <Chip onClear={() => update({ subcategory: "", brand: "" })}>{subcategory}</Chip>}
+              {brand && <Chip onClear={() => update({ brand: "" })}>{brand}</Chip>}
+              {(minPrice || maxPrice) && <Chip onClear={() => update({ minPrice: "", maxPrice: "" })}>₹{minPrice || 0} – {maxPrice ? `₹${maxPrice}` : "Any"}</Chip>}
+              {inStock && <Chip onClear={() => update({ inStock: "" })}>In stock</Chip>}
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <span className="hidden text-sm text-slate-500 sm:inline">Sort by</span>
+              <select value={sort} onChange={(e) => update({ sort: e.target.value })} className="rounded-xl border-0 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 focus:ring-2 focus:ring-brand-500" style={{ margin: 0, width: "auto" }}>
+                {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
           </div>
 
           {loading ? (
-            <div className="pp-loading">
-              <div className="pp-spinner" />
-              <p>Loading products...</p>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3 2xl:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} />)}
             </div>
-          ) : paginatedProducts.length > 0 ? (
+          ) : error ? (
+            <div className="card-premium p-10 text-center">
+              <p className="mb-4 font-semibold text-rose-600">{error}</p>
+              <button onClick={fetchProducts} className="btn-brand">Retry</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="card-premium flex flex-col items-center p-12 text-center">
+              <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-brand-50 text-2xl text-brand-600"><FaBoxOpen /></div>
+              <h3 className="text-lg font-extrabold text-slate-900" style={{ margin: 0 }}>No products found</h3>
+              <p className="mt-1 max-w-sm text-sm text-slate-500">
+                {categoryParam ? `There are no products in “${title}” matching your filters.` : "Try changing your search or filters."}
+              </p>
+              <button
+                onClick={() => { clearFilters(); update({ search: "", category: "" }); }}
+                className="btn-brand mt-5"
+              >
+                View all products
+              </button>
+            </div>
+          ) : (
             <>
-              <div className="pp-grid">
-                {paginatedProducts.map((product) => (
-                  <ProductCard key={product._id} product={product} />
-                ))}
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3 2xl:grid-cols-4">
+                {shown.map((p) => <ProductCard key={p._id} product={p} />)}
               </div>
-              {totalPages > 1 && (
-                <div className="pp-pagination">
-                  <button
-                    className="pp-page-nav"
-                    onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                    disabled={currentPage === 1}
-                  >
-                    Prev
-                  </button>
-                  <div className="pp-page-numbers">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                      (page) => (
-                        <button
-                          key={page}
-                          className={`pp-page-num ${currentPage === page ? "pp-page-num--active" : ""}`}
-                          onClick={() => setCurrentPage(page)}
-                        >
-                          {page}
-                        </button>
-                      ),
-                    )}
-                  </div>
-                  <button
-                    className="pp-page-nav"
-                    onClick={() =>
-                      setCurrentPage((p) => Math.min(p + 1, totalPages))
-                    }
-                    disabled={currentPage === totalPages}
-                  >
-                    Next
-                  </button>
+              {visible < filtered.length && (
+                <div className="mt-10 text-center">
+                  <p className="mb-3 text-sm text-slate-500">Showing {shown.length} of {filtered.length}</p>
+                  <button onClick={() => setVisible((v) => v + PAGE_SIZE)} className="btn-brand !px-8">Load more</button>
                 </div>
               )}
             </>
-          ) : (
-            <div className="pp-empty">
-              <FaBoxOpen className="pp-empty-icon" />
-              <h3>No products found</h3>
-              <p>Try adjusting your filters or search term</p>
-              <button className="pp-empty-btn" onClick={clearFilters}>
-                Clear Filters
-              </button>
-            </div>
           )}
-        </section>
-
-        {user && selectedProduct && (
-          <CheckoutModal
-            isOpen={showCheckout}
-            onClose={() => {
-              setShowCheckout(false);
-              setSelectedProduct(null);
-              setBuyNowQuantity(1);
-            }}
-            cartItems={[{ ...selectedProduct, quantity: buyNowQuantity }]}
-            totalAmount={
-              parseFloat(selectedProduct.price || 0) * buyNowQuantity * 1.18
-            }
-            userId={user._id}
-            userName={user.name}
-            userEmail={user.email}
-          />
-        )}
+        </main>
       </div>
-    </main>
+
+      {/* Mobile drawer */}
+      {drawer && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setDrawer(false)} />
+          <div className="absolute inset-x-0 bottom-0 flex max-h-[85vh] animate-fade-up flex-col rounded-t-3xl bg-white shadow-premium-lg">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <h3 className="font-extrabold text-slate-900" style={{ margin: 0 }}>Filters</h3>
+              <button onClick={() => setDrawer(false)} className="grid h-9 w-9 place-items-center rounded-full bg-slate-100"><FaTimes /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">{FilterPanel}</div>
+            <div className="border-t border-slate-100 p-4">
+              <button onClick={() => setDrawer(false)} className="btn-brand w-full"><FaCheck /> Show {filtered.length} products</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
+
+const Chip = ({ children, onClear }) => (
+  <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700">
+    {children}
+    <button onClick={onClear} aria-label="Remove filter" className="text-brand-400 hover:text-brand-700"><FaTimes /></button>
+  </span>
+);
 
 export default ProductsPage;
