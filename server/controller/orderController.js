@@ -1,6 +1,7 @@
 const Order = require("../model/orderSchema.js");
 const { syncOrderToCrm, fireAndForget } = require("../services/crmSyncService");
 const { generateBill } = require("../services/billService.js");
+const { releaseCoupon } = require("../services/couponService");
 
 exports.createOrder = async (req, res) => {
     try {
@@ -165,6 +166,10 @@ exports.updateOrderStatus = async (req, res) => {
 
     await order.save();
 
+    if (status === "Cancelled") {
+      releaseCoupon(order).catch((e) => console.error("releaseCoupon failed:", e.message));
+    }
+
     fireAndForget(() => syncOrderToCrm(order), `order-status:${order._id}`);
 
     res.json({
@@ -297,6 +302,9 @@ exports.cancelOrder = async (req, res) => {
     }
 
     await order.save();
+
+    // Give the coupon back to the customer
+    releaseCoupon(order).catch((e) => console.error("releaseCoupon failed:", e.message));
 
     fireAndForget(() => syncOrderToCrm(order), `order-cancel:${order._id}`);
 

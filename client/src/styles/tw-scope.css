@@ -1,0 +1,11 @@
+/* Neutralise the legacy global element rules (p, h1-h6, label) inside Tailwind-built components.
+   :where() keeps specificity at 0 so Tailwind utilities still win. This file is imported LAST. */
+:where(.tw-root) :is(h1, h2, h3, h4, h5, h6, p, label) {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+:where(.tw-root) p { line-height: 1.5; }

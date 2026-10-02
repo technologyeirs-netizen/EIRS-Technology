@@ -1,3 +1,5 @@
+import CouponBox from "./CouponBox";
+import useAppliedCoupon from "../hooks/useAppliedCoupon";
 import React, { useState, useEffect } from "react";
 import {
   FaTimes,
@@ -29,7 +31,9 @@ const CheckoutModal = ({ onClose = () => {} }) => {
   const userEmail = user?.email;
 
   const { cartItems, getTotalPrice } = useCart();
-  const totalAmount = getTotalPrice() * 1.18;
+  const subtotalValue = getTotalPrice();
+  const couponState = useAppliedCoupon(subtotalValue);
+  const totalAmount = couponState.total;
   const [paymentMethod, setPaymentMethod] = useState("Card");
   const [paymentSubMethod, setPaymentSubMethod] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -316,6 +320,7 @@ const CheckoutModal = ({ onClose = () => {} }) => {
   amount: Math.round(totalAmount * 100),
   currency: "INR",
   items,
+  couponCode: couponState.applied?.code || undefined,
 
   userId,
   customerEmail: userEmail,
@@ -355,6 +360,7 @@ const CheckoutModal = ({ onClose = () => {} }) => {
 
       console.log("Order created:", orderResponse);
       const { orderId, mongoOrderId } = orderResponse;
+      const payableAmount = orderResponse.amount || Math.round(totalAmount * 100);
 
       if (!orderId || !mongoOrderId) {
         throw new Error("No order ID received from server");
@@ -374,10 +380,12 @@ const CheckoutModal = ({ onClose = () => {} }) => {
           console.log("COD Verification response:", verifyResponse);
           if (verifyResponse.success) {
             localStorage.removeItem("cart");
+            sessionStorage.removeItem("appliedCoupon");
             setSuccessOrder({ type: "cod", order: verifyResponse.order });
 
             if (verifyResponse.success) {
               localStorage.removeItem("cart");
+            sessionStorage.removeItem("appliedCoupon");
 
               if (typeof onClose === "function") {
                 onClose();
@@ -422,7 +430,7 @@ const CheckoutModal = ({ onClose = () => {} }) => {
       // Razorpay options
       const options = {
         key: process.env.REACT_APP_RAZORPAY_KEY_ID,
-        amount: Math.round(totalAmount * 100),
+        amount: payableAmount,
         currency: "INR",
         name: "EIRS Technology",
         description: `Purchase of ${cartItems.length} product(s)`,
@@ -444,6 +452,7 @@ const CheckoutModal = ({ onClose = () => {} }) => {
             console.log("Verification response:", verifyResponse);
             if (verifyResponse.success) {
               localStorage.removeItem("cart");
+            sessionStorage.removeItem("appliedCoupon");
               setSuccessOrder({
                 type: "online",
                 order: verifyResponse.order,
@@ -953,8 +962,10 @@ const CheckoutModal = ({ onClose = () => {} }) => {
                         <span>
                           ₹
                           {(
-                            parseFloat(item.price) * item.quantity
-                          ).toLocaleString()}
+                            parseFloat(item.price) *
+                            (1 - (parseFloat(item.discount) || 0) / 100) *
+                            item.quantity
+                          ).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                         </span>
                       </div>
                     </div>
@@ -965,17 +976,37 @@ const CheckoutModal = ({ onClose = () => {} }) => {
 
                 <div className="summary-row">
                   <span>Subtotal</span>
-                  <span>₹{getTotalPrice().toFixed(2)}</span>
+                  <span>₹{subtotalValue.toFixed(2)}</span>
                 </div>
+
+                {couponState.discount > 0 && (
+                  <div className="summary-row" style={{ color: "#15803d", fontWeight: 700 }}>
+                    <span>Coupon ({couponState.applied.code})</span>
+                    <span>− ₹{couponState.discount.toFixed(2)}</span>
+                  </div>
+                )}
 
                 <div className="summary-row">
                   <span>GST (18%)</span>
-                  <span>₹{(getTotalPrice() * 0.18).toFixed(2)}</span>
+                  <span>₹{couponState.gst.toFixed(2)}</span>
                 </div>
 
                 <div className="summary-total">
                   <span>Total</span>
                   <span>₹{totalAmount.toFixed(2)}</span>
+                </div>
+
+                {couponState.notice && (
+                  <p style={{ color: "#b45309", fontSize: 13, margin: "8px 0" }}>{couponState.notice}</p>
+                )}
+
+                <div style={{ margin: "14px 0" }}>
+                  <CouponBox
+                    subtotal={subtotalValue}
+                    applied={couponState.applied}
+                    onApply={couponState.apply}
+                    onRemove={couponState.remove}
+                  />
                 </div>
 
                 <button

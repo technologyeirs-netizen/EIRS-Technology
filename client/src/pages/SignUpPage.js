@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { FaEye, FaEyeSlash, FaLocationArrow, FaSpinner } from 'react-icons/fa';
+import { FaEye, FaEyeSlash, FaLocationArrow, FaSpinner, FaUser, FaEnvelope, FaPhoneAlt, FaLock, FaExclamationCircle, FaArrowRight } from 'react-icons/fa';
 import { authService } from '../services/api';
-import '../styles/AuthPages.css';
+import AuthShell from '../components/AuthShell';
 
 const SignUpPage = () => {
   const navigate = useNavigate();
@@ -149,188 +149,95 @@ if (!/^\d{6}$/.test(formData.pincode)) {
     }
   };
 
-  return (
-    <main className="auth-page">
-      <div className="auth-container">
-        <div className="auth-card">
-          <h1>Create Account</h1>
-          <p>Join us to get started with EIRS Technology</p>
+  const strength = (() => {
+    const p = formData.password;
+    let s = 0;
+    if (p.length >= 6) s++;
+    if (p.length >= 10) s++;
+    if (/[A-Z]/.test(p) && /[a-z]/.test(p)) s++;
+    if (/\d/.test(p) && /[^A-Za-z0-9]/.test(p)) s++;
+    return p ? Math.max(1, s) : 0;
+  })();
+  const strengthMeta = [null, ['Weak', 'bg-rose-500'], ['Fair', 'bg-amber-500'], ['Good', 'bg-lime-500'], ['Strong', 'bg-emerald-500']][strength];
 
-          {error && <div className="alert alert-error">{error}</div>}
-
-          <form onSubmit={handleSubmit} className="auth-form">
-            <div className="form-group">
-              <label htmlFor="name">Full Name</label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                value={formData.name}
-                onChange={handleInputChange}
-                required
-                placeholder="Enter your full name"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="email">Email Address</label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                required
-                placeholder="Enter your email"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="phoneNumber">Phone Number</label>
-              <input
-                type="tel"
-                id="phoneNumber"
-                name="phoneNumber"
-                value={formData.phoneNumber}
-                onChange={handleInputChange}
-                required
-                placeholder="Enter your phone number"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="address">Address</label>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
-                <button
-                  type="button"
-                  onClick={handleAutoDetectLocation}
-                  disabled={geoLoading}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '8px 16px',
-                    background: geoLoading ? '#a0aec0' : 'linear-gradient(135deg, #667eea, #764ba2)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '50px',
-                    fontSize: '0.82rem',
-                    fontWeight: '600',
-                    cursor: geoLoading ? 'not-allowed' : 'pointer',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  {geoLoading ? <FaSpinner style={{ animation: 'spin 0.9s linear infinite' }} /> : <FaLocationArrow />}
-                  {geoLoading ? 'Detecting…' : 'Auto-Detect Location'}
-                </button>
-              </div>
-              {geoError && (
-                <p style={{ color: '#c53030', fontSize: '0.8rem', marginBottom: '6px' }}>{geoError}</p>
-              )}
-              <input
-                type="text"
-                id="address"
-                name="address"
-                value={formData.address}
-                onChange={handleInputChange}
-                required
-                placeholder="Or type your address manually"
-              />
-            </div>
-
-            <div className="form-group">
-  <label htmlFor="city">City</label>
-  <input
-    type="text"
-    id="city"
-    name="city"
-    value={formData.city}
-    onChange={handleInputChange}
-    required
-    placeholder="Enter city"
-  />
-</div>
-<div className="form-group">
-  <label htmlFor="state">State</label>
-  <input
-    type="text"
-    id="state"
-    name="state"
-    value={formData.state}
-    onChange={handleInputChange}
-    required
-    placeholder="Enter state"
-  />
-</div>
-<div className="form-group">
-  <label htmlFor="pincode">Pincode</label>
-  <input
-    type="text"
-    id="pincode"
-    name="pincode"
-    value={formData.pincode}
-    onChange={handleInputChange}
-    required
-    placeholder="Enter pincode"
-  />
-</div>
-
-            <div className="form-group">
-              <label htmlFor="password">Password</label>
-              <div className="password-input">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  id="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Create a strong password"
-                />
-                <button
-                  type="button"
-                  className="toggle-password"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? <FaEyeSlash /> : <FaEye />}
-                </button>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="confirmPassword">Confirm Password</label>
-              <div className="password-input">
-                <input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  value={formData.confirmPassword}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Confirm your password"
-                />
-                <button
-                  type="button"
-                  className="toggle-password"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                >
-                  {showConfirmPassword ? <FaEyeSlash /> : <FaEye />}
-                </button>
-              </div>
-            </div>
-
-            <button type="submit" className="btn btn-primary btn-large" disabled={loading}>
-              {loading ? 'Creating Account...' : 'Sign Up'}
-            </button>
-          </form>
-
-          <div className="auth-footer">
-            <p>Already have an account? <Link to="/signin">Sign In</Link></p>
-          </div>
-        </div>
+  const Field = ({ label, icon: Icon, right, children, full }) => (
+    <div className={full ? 'sm:col-span-2' : ''}>
+      <label className="label-premium">{label}</label>
+      <div className="relative">
+        {Icon && <Icon className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />}
+        {children}
+        {right}
       </div>
-    </main>
+    </div>
+  );
+  const inputCls = (icon = true) => `input-premium !py-3.5 ${icon ? '!pl-11' : ''}`;
+
+  return (
+    <AuthShell
+      wide
+      title="Create your account"
+      subtitle="Join EIRS Technology — it only takes a minute."
+      footer={<>Already have an account? <Link to="/signin" className="font-bold text-brand-600 hover:text-brand-700">Sign in</Link></>}
+    >
+      {error && (
+        <div className="mb-5 flex items-start gap-2 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 ring-1 ring-rose-100"><FaExclamationCircle className="mt-0.5 shrink-0" />{error}</div>
+      )}
+
+      <form onSubmit={handleSubmit} className="grid gap-x-4 gap-y-5 sm:grid-cols-2">
+        <Field label="Full name" icon={FaUser} full>
+          <input type="text" id="name" name="name" value={formData.name} onChange={handleInputChange} required placeholder="Your full name" className={inputCls()} style={{ margin: 0 }} />
+        </Field>
+        <Field label="Email" icon={FaEnvelope}>
+          <input type="email" id="email" name="email" value={formData.email} onChange={handleInputChange} required placeholder="you@example.com" className={inputCls()} style={{ margin: 0 }} />
+        </Field>
+        <Field label="Phone number" icon={FaPhoneAlt}>
+          <input type="tel" id="phoneNumber" name="phoneNumber" value={formData.phoneNumber} onChange={handleInputChange} required placeholder="10-digit mobile" className={inputCls()} style={{ margin: 0 }} />
+        </Field>
+
+        <div className="sm:col-span-2">
+          <div className="mb-1.5 flex items-center justify-between">
+            <label className="label-premium !mb-0">Address</label>
+            <button type="button" onClick={handleAutoDetectLocation} disabled={geoLoading} className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-xs font-bold text-brand-700 transition hover:bg-brand-100">
+              {geoLoading ? <FaSpinner className="animate-spin" /> : <FaLocationArrow />} {geoLoading ? 'Detecting…' : 'Auto-detect'}
+            </button>
+          </div>
+          <textarea id="address" name="address" rows={2} value={formData.address} onChange={handleInputChange} required placeholder="House no., street, area" className="input-premium resize-none" style={{ margin: 0 }} />
+          {geoError && <p className="mt-1.5 text-xs font-semibold text-amber-600">{geoError}</p>}
+        </div>
+
+        <Field label="City"><input type="text" id="city" name="city" value={formData.city} onChange={handleInputChange} required placeholder="City" className={inputCls(false)} style={{ margin: 0 }} /></Field>
+        <Field label="State"><input type="text" id="state" name="state" value={formData.state} onChange={handleInputChange} required placeholder="State" className={inputCls(false)} style={{ margin: 0 }} /></Field>
+        <Field label="Pincode" full><input type="text" inputMode="numeric" id="pincode" name="pincode" maxLength={6} value={formData.pincode} onChange={handleInputChange} required placeholder="6-digit pincode" className={inputCls(false)} style={{ margin: 0 }} /></Field>
+
+        <Field
+          label="Password"
+          icon={FaLock}
+          right={<button type="button" onClick={() => setShowPassword((p) => !p)} aria-label="Toggle password" className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 hover:text-slate-700">{showPassword ? <FaEyeSlash /> : <FaEye />}</button>}
+        >
+          <input type={showPassword ? 'text' : 'password'} id="password" name="password" value={formData.password} onChange={handleInputChange} required placeholder="Min 6 characters" className={`${inputCls()} !pr-12`} style={{ margin: 0 }} />
+        </Field>
+        <Field
+          label="Confirm password"
+          icon={FaLock}
+          right={<button type="button" onClick={() => setShowConfirmPassword((p) => !p)} aria-label="Toggle confirm password" className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 hover:text-slate-700">{showConfirmPassword ? <FaEyeSlash /> : <FaEye />}</button>}
+        >
+          <input type={showConfirmPassword ? 'text' : 'password'} id="confirmPassword" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange} required placeholder="Re-enter password" className={`${inputCls()} !pr-12`} style={{ margin: 0 }} />
+        </Field>
+
+        {strengthMeta && (
+          <div className="sm:col-span-2 -mt-2">
+            <div className="flex gap-1.5">
+              {[1, 2, 3, 4].map((i) => <span key={i} className={`h-1.5 flex-1 rounded-full transition ${i <= strength ? strengthMeta[1] : 'bg-slate-200'}`} />)}
+            </div>
+            <p className="mt-1 text-xs font-semibold text-slate-500">Password strength: {strengthMeta[0]}</p>
+          </div>
+        )}
+
+        <button type="submit" disabled={loading} className="btn-brand !py-3.5 text-base sm:col-span-2">
+          {loading ? 'Creating account…' : <>Create account <FaArrowRight className="text-sm" /></>}
+        </button>
+      </form>
+    </AuthShell>
   );
 };
 

@@ -1,66 +1,66 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { FaEye, FaEyeSlash, FaEnvelope, FaMobileAlt } from 'react-icons/fa';
+import { FaEye, FaEyeSlash, FaEnvelope, FaMobileAlt, FaLock, FaArrowRight, FaCheckCircle, FaExclamationCircle } from 'react-icons/fa';
 import { authService } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import '../styles/AuthPages.css';
+import AuthShell from '../components/AuthShell';
+
+const IconInput = ({ icon: Icon, right, ...props }) => (
+  <div className="relative">
+    <Icon className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+    <input {...props} className="input-premium !py-3.5 !pl-11 !pr-12" style={{ margin: 0 }} />
+    {right}
+  </div>
+);
 
 const SignInPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
 
-  // Tab: 'email' or 'mobile'
   const [loginMode, setLoginMode] = useState('email');
-
-  // Email login state
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState(location.state?.message || '');
   const [formData, setFormData] = useState({ email: '', password: '' });
 
-  // Mobile OTP state
   const [phone, setPhone] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState('');
   const [countdown, setCountdown] = useState(0);
 
-  // Countdown timer for resend
-  React.useEffect(() => {
+  useEffect(() => {
     if (countdown <= 0) return;
-    const timer = setTimeout(() => setCountdown(c => c - 1), 1000);
-    return () => clearTimeout(timer);
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
   }, [countdown]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((p) => ({ ...p, [name]: value }));
     setError('');
   };
 
-  // ─── Email Sign In ───────────────────────────────────────────
+  const goHome = (isAdmin) => {
+    setTimeout(() => {
+      navigate(isAdmin ? '/admin/dashboard' : '/', { state: { message: 'Logged in successfully!' } });
+    }, 100);
+  };
+
   const handleEmailSubmit = async (e) => {
     e.preventDefault();
     setError(''); setMessage(''); setLoading(true);
-
     if (!formData.email || !formData.password) {
       setError('Email and password are required');
       setLoading(false);
       return;
     }
-
     try {
       const response = await authService.signin(formData);
       if (response && response.success) {
         if (response.token) login(response.data, response.token);
-        setTimeout(() => {
-          if (response.data?.isAdmin) {
-            navigate('/admin/dashboard', { state: { message: 'Logged in successfully as admin!' } });
-          } else {
-            navigate('/', { state: { message: 'Logged in successfully!' } });
-          }
-        }, 100);
+        goHome(response.data?.isAdmin);
       } else {
         setError(response?.message || 'Sign in failed');
       }
@@ -71,17 +71,14 @@ const SignInPage = () => {
     }
   };
 
-  // ─── Send OTP via Fast2SMS ───────────────────────────────────
   const handleSendOTP = async () => {
     setError(''); setMessage(''); setLoading(true);
-
     const digits = phone.replace(/\D/g, '');
     if (digits.length !== 10) {
       setError('Please enter a valid 10-digit mobile number');
       setLoading(false);
       return;
     }
-
     try {
       const res = await authService.sendFast2SMSOTP(digits);
       if (res.success) {
@@ -99,29 +96,19 @@ const SignInPage = () => {
     }
   };
 
-  // ─── Verify OTP ──────────────────────────────────────────────
   const handleVerifyOTP = async () => {
     setError(''); setMessage(''); setLoading(true);
-
     if (!otp || otp.length !== 6) {
       setError('Please enter the 6-digit OTP');
       setLoading(false);
       return;
     }
-
     try {
       const digits = phone.replace(/\D/g, '').slice(-10);
       const res = await authService.verifyFast2SMSOTP(digits, otp);
-
       if (res.success) {
         login(res.data, res.token);
-        setTimeout(() => {
-          if (res.data?.isAdmin) {
-            navigate('/admin/dashboard', { state: { message: 'Logged in successfully!' } });
-          } else {
-            navigate('/', { state: { message: 'Logged in successfully!' } });
-          }
-        }, 100);
+        goHome(res.data?.isAdmin);
       } else {
         setError(res.message || 'OTP verification failed');
       }
@@ -132,149 +119,85 @@ const SignInPage = () => {
     }
   };
 
-  // ─── Reset mobile flow ──────────────────────────────────────
-  const resetMobileFlow = () => {
-    setOtpSent(false);
-    setOtp('');
-    setError('');
-    setMessage('');
-  };
+  const resetMobileFlow = () => { setOtpSent(false); setOtp(''); setError(''); setMessage(''); };
 
   return (
-    <main className="auth-page">
-      <div className="auth-container">
-        <div className="auth-card">
-          <h1>Sign In</h1>
-          <p>Welcome back to EIRS Technology</p>
-
-          {/* ── Tab Switcher ─────────────────────────────────── */}
-          <div style={{
-            display: 'flex', borderBottom: '2px solid #e0e0e0', marginBottom: '1.2rem'
-          }}>
-            <button type="button" onClick={() => { setLoginMode('email'); resetMobileFlow(); setError(''); setMessage(''); }}
-              style={{
-                flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
-                fontWeight: 600, fontSize: '0.95rem',
-                background: loginMode === 'email' ? '#667eea' : 'transparent',
-                color: loginMode === 'email' ? '#fff' : '#555',
-                borderRadius: '6px 6px 0 0',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                transition: 'all 0.3s ease'
-              }}>
-              <FaEnvelope /> Email
-            </button>
-            <button type="button" onClick={() => { setLoginMode('mobile'); resetMobileFlow(); setError(''); setMessage(''); }}
-              style={{
-                flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
-                fontWeight: 600, fontSize: '0.95rem',
-                background: loginMode === 'mobile' ? '#667eea' : 'transparent',
-                color: loginMode === 'mobile' ? '#fff' : '#555',
-                borderRadius: '6px 6px 0 0',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                transition: 'all 0.3s ease'
-              }}>
-              <FaMobileAlt /> Mobile OTP
-            </button>
-          </div>
-
-          {message && <div className="alert alert-success">{message}</div>}
-          {error && <div className="alert alert-error">{error}</div>}
-
-          {/* ═══════════ EMAIL LOGIN ═══════════ */}
-          {loginMode === 'email' && (
-            <form onSubmit={handleEmailSubmit} className="auth-form">
-              <div className="form-group">
-                <label htmlFor="email">Email Address</label>
-                <input type="email" id="email" name="email" value={formData.email}
-                  onChange={handleInputChange} required placeholder="Enter your email" />
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="password">Password</label>
-                <div className="password-input">
-                  <input type={showPassword ? 'text' : 'password'} id="password" name="password"
-                    value={formData.password} onChange={handleInputChange} required placeholder="Enter your password" />
-                  <button type="button" className="toggle-password" onClick={() => setShowPassword(!showPassword)}>
-                    {showPassword ? <FaEyeSlash /> : <FaEye />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="form-options">
-                <label><input type="checkbox" name="remember" /> Remember me</label>
-                <Link to="/forgot-password" className="forgot-link">Forgot Password?</Link>
-              </div>
-
-              <button type="submit" className="btn btn-primary btn-large" disabled={loading}>
-                {loading ? 'Signing In...' : 'Sign In'}
-              </button>
-            </form>
-          )}
-
-          {/* ═══════════ MOBILE OTP LOGIN ═══════════ */}
-          {loginMode === 'mobile' && (
-            <div className="auth-form">
-              {/* Step 1: Enter phone number */}
-              {!otpSent && (
-                <>
-                  <div className="form-group">
-                    <label htmlFor="phone">Mobile Number</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{
-                        padding: '0.7rem 0.6rem', border: '2px solid #667eea', borderRadius: '0.5rem',
-                        background: '#f7f8fc', fontWeight: 600, fontSize: '0.95rem', color: '#333'
-                      }}>+91</span>
-                      <input type="tel" id="phone" value={phone}
-                        onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }}
-                        placeholder="Enter 10-digit number" maxLength={10}
-                        style={{ flex: 1 }} />
-                    </div>
-                  </div>
-                  <button type="button" className="btn btn-primary btn-large" disabled={loading || phone.length !== 10}
-                    onClick={handleSendOTP}>
-                    {loading ? 'Sending...' : 'Send OTP'}
-                  </button>
-                </>
-              )}
-
-              {/* Step 2: Enter OTP */}
-              {otpSent && (
-                <>
-                  <div className="form-group">
-                    <label>OTP sent to +91 {phone}</label>
-                    <input type="text" value={otp}
-                      onChange={e => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
-                      placeholder="Enter 6-digit OTP" maxLength={6}
-                      style={{ letterSpacing: '0.5rem', textAlign: 'center', fontSize: '1.3rem', fontWeight: 700 }} />
-                  </div>
-
-                  <button type="button" className="btn btn-primary btn-large" disabled={loading || otp.length !== 6}
-                    onClick={handleVerifyOTP}>
-                    {loading ? 'Verifying...' : 'Verify OTP'}
-                  </button>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10 }}>
-                    <button type="button" onClick={resetMobileFlow}
-                      style={{ background: 'none', border: 'none', color: '#667eea', cursor: 'pointer', fontWeight: 600 }}>
-                      ← Change Number
-                    </button>
-                    <button type="button" disabled={countdown > 0 || loading}
-                      onClick={handleSendOTP}
-                      style={{ background: 'none', border: 'none', color: countdown > 0 ? '#999' : '#667eea', cursor: countdown > 0 ? 'default' : 'pointer', fontWeight: 600 }}>
-                      {countdown > 0 ? `Resend in ${countdown}s` : 'Resend OTP'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="auth-footer">
-            <p>Don't have an account? <Link to="/signup">Sign Up</Link></p>
-          </div>
-        </div>
+    <AuthShell
+      title="Welcome back 👋"
+      subtitle="Sign in to track orders, use coupons and manage your account."
+      footer={<>New to EIRS? <Link to="/signup" className="font-bold text-brand-600 hover:text-brand-700">Create an account</Link></>}
+    >
+      {/* tabs */}
+      <div className="mb-6 grid grid-cols-2 gap-1.5 rounded-2xl bg-slate-100 p-1.5">
+        {[['email', 'Email', FaEnvelope], ['mobile', 'Mobile OTP', FaMobileAlt]].map(([k, l, Icon]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => { setLoginMode(k); setError(''); setMessage(''); }}
+            className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold transition ${loginMode === k ? 'bg-white text-brand-700 shadow' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            <Icon /> {l}
+          </button>
+        ))}
       </div>
-    </main>
+
+      {message && (
+        <div className="mb-5 flex items-start gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100"><FaCheckCircle className="mt-0.5 shrink-0" />{message}</div>
+      )}
+      {error && (
+        <div className="mb-5 flex items-start gap-2 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 ring-1 ring-rose-100"><FaExclamationCircle className="mt-0.5 shrink-0" />{error}</div>
+      )}
+
+      {loginMode === 'email' ? (
+        <form onSubmit={handleEmailSubmit} className="space-y-5">
+          <div>
+            <label htmlFor="email" className="label-premium">Email address</label>
+            <IconInput icon={FaEnvelope} type="email" id="email" name="email" value={formData.email} onChange={handleInputChange} required placeholder="you@example.com" autoComplete="email" />
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label htmlFor="password" className="label-premium !mb-0">Password</label>
+              <Link to="/forgot-password" className="text-xs font-bold text-brand-600 hover:text-brand-700">Forgot password?</Link>
+            </div>
+            <IconInput
+              icon={FaLock}
+              type={showPassword ? 'text' : 'password'}
+              id="password" name="password" value={formData.password} onChange={handleInputChange} required placeholder="Enter your password" autoComplete="current-password"
+              right={<button type="button" onClick={() => setShowPassword((p) => !p)} aria-label="Toggle password" className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 hover:text-slate-700">{showPassword ? <FaEyeSlash /> : <FaEye />}</button>}
+            />
+          </div>
+          <button type="submit" disabled={loading} className="btn-brand w-full !py-3.5 text-base">
+            {loading ? 'Signing in…' : <>Sign in <FaArrowRight className="text-sm" /></>}
+          </button>
+        </form>
+      ) : (
+        <div className="space-y-5">
+          <div>
+            <label htmlFor="phone" className="label-premium">Mobile number</label>
+            <div className="flex gap-2">
+              <span className="grid place-items-center rounded-xl bg-slate-100 px-4 text-sm font-bold text-slate-600">+91</span>
+              <input id="phone" type="tel" inputMode="numeric" disabled={otpSent} value={phone} onChange={(e) => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }} placeholder="10-digit number" className="input-premium !py-3.5 disabled:bg-slate-50" style={{ margin: 0 }} />
+            </div>
+          </div>
+
+          {!otpSent ? (
+            <button type="button" onClick={handleSendOTP} disabled={loading} className="btn-brand w-full !py-3.5 text-base">{loading ? 'Sending…' : 'Send OTP'}</button>
+          ) : (
+            <>
+              <div>
+                <label htmlFor="otp" className="label-premium">Enter OTP</label>
+                <input id="otp" type="text" inputMode="numeric" value={otp} onChange={(e) => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }} placeholder="• • • • • •" className="input-premium !py-3.5 text-center text-xl font-extrabold tracking-[.5em]" style={{ margin: 0 }} />
+              </div>
+              <button type="button" onClick={handleVerifyOTP} disabled={loading} className="btn-brand w-full !py-3.5 text-base">{loading ? 'Verifying…' : 'Verify & sign in'}</button>
+              <div className="flex items-center justify-between text-sm">
+                <button type="button" onClick={resetMobileFlow} className="font-semibold text-slate-500 hover:text-slate-800">← Change number</button>
+                <button type="button" onClick={handleSendOTP} disabled={countdown > 0 || loading} className="font-bold text-brand-600 disabled:text-slate-400">{countdown > 0 ? `Resend in ${countdown}s` : 'Resend OTP'}</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </AuthShell>
   );
 };
 

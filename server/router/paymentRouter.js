@@ -8,6 +8,8 @@ const jwtAuth = require("../middleware/jwtAuth");
 const orderController = require("../controller/orderController");
 const { generateBill } = require("../services/billService");
 const Product = require("../model/productSchema");
+const { invalidateProductCache } = require("../controller/productController");
+const { validateCouponForUser, computeTotals, redeemCoupon } = require("../services/couponService");
 const router = express.Router();
 
 
@@ -67,6 +69,32 @@ const calculateEstimatedDelivery = () => {
   return deliveryDate;
 };
 
+// Reduce stock (once) and redeem the coupon (once) for a paid / confirmed order.
+// Shared by verify-payment and the Razorpay webhook so whichever arrives first does the work.
+const finalizeOrderSideEffects = async (order) => {
+  if (!order.stockDeducted) {
+    for (const item of order.items) {
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { stock: -item.quantity },
+      });
+    }
+    order.stockDeducted = true;
+    invalidateProductCache();
+  }
+
+  // Money is already captured, so a coupon limit race must never fail the order
+  if (order.couponId) {
+    try {
+      const redeemed = await redeemCoupon(order);
+      if (!redeemed.redeemed) {
+        console.warn("Coupon not redeemed for paid order", order._id, redeemed.reason);
+      }
+    } catch (e) {
+      console.error("redeemCoupon error:", e.message);
+    }
+  }
+};
+
 /* 
    POST /payment/orders  create Razorpay order
  */
@@ -80,6 +108,7 @@ router.post("/orders", jwtAuth, async (req, res) => {
       phone,
       shippingAddress,
       paymentMethod,
+      couponCode,
     } = req.body;
     const userId = req.user.id;
 
@@ -114,10 +143,89 @@ router.post("/orders", jwtAuth, async (req, res) => {
     const normalizedPaymentMethod =
       normMap[(paymentMethod || "").toLowerCase()] || "Card";
 
+    // ── 1. Price the cart on the SERVER (never trust prices/amount sent by the browser) ──
+    const productIds = items
+      .map((item) => item.productId || item._id || item.id)
+      .filter(Boolean);
+    const dbProducts = await Product.find({ _id: { $in: productIds } })
+      .select("price discount stock productName")
+      .lean();
+    const dbMap = new Map(dbProducts.map((p) => [String(p._id), p]));
+
+    const mappedItems = items.map((item, idx) => {
+      const productId = item.productId || item._id || item.id;
+
+      if (!productId) {
+        throw new Error(`Item[${idx}] is missing a productId`);
+      }
+
+      const dbProduct = dbMap.get(String(productId));
+      const quantity = Math.max(1, parseInt(item.quantity, 10) || 1);
+
+      if (dbProduct && dbProduct.stock < quantity) {
+        const err = new Error(
+          dbProduct.stock > 0
+            ? `Only ${dbProduct.stock} unit(s) of ${dbProduct.productName} available`
+            : `${dbProduct.productName} is out of stock`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+
+      return {
+        productId,
+        productName: item.productName || item.name || dbProduct?.productName || "Product",
+
+        category:
+          typeof item.category === "object"
+            ? item.category?._id
+            : item.category || "",
+
+        brand: item.brand || "",
+        // DB price / discount win over whatever the client sent
+        price: dbProduct ? Number(dbProduct.price) || 0 : Number(item.price) || 0,
+        quantity,
+        image: item.image || item.productImage || "",
+        hsn: item.hsn || "",
+        modelNo: item.modelNo || "",
+        discount: dbProduct ? Number(dbProduct.discount) || 0 : Number(item.discount) || 0,
+      };
+    });
+
+    const subtotal = mappedItems.reduce(
+      (sum, i) => sum + i.price * (1 - i.discount / 100) * i.quantity,
+      0,
+    );
+
+    // ── 2. Coupon (validated again on the server) ──
+    let coupon = null;
+    let couponDiscount = 0;
+    if (couponCode && String(couponCode).trim()) {
+      const result = await validateCouponForUser(couponCode, userId, subtotal);
+      if (!result.valid) {
+        return res.status(400).json({ success: false, message: result.message });
+      }
+      coupon = result.coupon;
+      couponDiscount = result.discount;
+    }
+
+    const totals = computeTotals(subtotal, couponDiscount);
+    if (totals.total < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Order total is too low to process with this coupon",
+      });
+    }
+
+    const amountPaise = Math.round(totals.total * 100);
+    if (amount && Math.abs(Math.round(amount) - amountPaise) > 100) {
+      console.warn(`Client amount ${amount} differs from server amount ${amountPaise}; using server amount`);
+    }
+
     let razorpayOrderId;
     try {
       const rzpOrder = await getRazorpay().orders.create({
-        amount: Math.round(amount),
+        amount: amountPaise,
         currency,
         receipt: `rcpt_${Date.now()}`,
         notes: {
@@ -125,6 +233,7 @@ router.post("/orders", jwtAuth, async (req, res) => {
           email: email || shippingAddress.email || "",
           company: "EIRS Technology",
           gst: "29AANCR6717K1ZN",
+          coupon: coupon ? coupon.code : "",
         },
       });
       razorpayOrderId = rzpOrder.id;
@@ -139,46 +248,24 @@ router.post("/orders", jwtAuth, async (req, res) => {
       });
     }
 
-    const mappedItems = items.map((item, idx) => {
-      const productId = item.productId || item._id || item.id;
-
-      if (!productId) {
-        throw new Error(`Item[${idx}] is missing a productId`);
-      }
-
-      return {
-        productId,
-        productName: item.productName || item.name || "Product",
-
-        category:
-          typeof item.category === "object"
-            ? item.category._id
-            : item.category || "",
-
-        brand: item.brand || "",
-        price: item.price || 0,
-        quantity: item.quantity || 1,
-        image: item.image || item.productImage || "",
-
-        // ADD THESE
-        hsn: item.hsn || "",
-        modelNo: item.modelNo || "",
-        discount: item.discount || 0,
-      };
-    });
-
     const totalItems = mappedItems.reduce((s, i) => s + i.quantity, 0);
-    const totalPrice = amount / 100;
+    const totalPrice = totals.total;
 
     const order = new Order({
       userId,
       items: mappedItems,
       totalPrice,
       totalItems,
+      subtotal: totals.subtotal,
+      gstAmount: totals.gst,
+      couponCode: coupon ? coupon.code : null,
+      couponId: coupon ? coupon._id : null,
+      couponDiscount,
       shippingAddress: {
         fullName: shippingAddress.fullName || "",
         email: shippingAddress.email || email || "",
         phone: shippingAddress.phone || phone || "",
+        houseNo: shippingAddress.houseNo || "",
         address: shippingAddress.address || "",
         city: shippingAddress.city || "",
         state: shippingAddress.state || "",
@@ -203,13 +290,17 @@ router.post("/orders", jwtAuth, async (req, res) => {
       orderId: razorpayOrderId,
       mongoOrderId: order._id.toString(),
       key: process.env.RAZORPAY_KEY_ID,
-      amount: Math.round(amount),
+      amount: amountPaise,
       currency,
+      totals,
+      coupon: coupon ? { code: coupon.code, discountAmount: couponDiscount } : null,
     });
   } catch (err) {
     console.error("/orders error:", err.message);
     const isVal =
-      err.message?.includes("validation") || err.message?.includes("missing");
+      err.statusCode === 400 ||
+      err.message?.includes("validation") ||
+      err.message?.includes("missing");
     return res.status(isVal ? 400 : 500).json({
       success: false,
       message: err.message || "Failed to create order",
@@ -237,25 +328,48 @@ router.post("/verify-payment", jwtAuth, async (req, res) => {
         return res
           .status(404)
           .json({ success: false, message: "Order not found" });
-      order.paymentStatus = "Pending";
-      order.paymentMethod = "CashOnDelivery";
-      order.status = "Confirmed";
-      order.razorpayPaymentId = "cod_" + orderId;
+
+      // Idempotent: already confirmed (double click / retry) -> return as is
+      if (order.status === "Confirmed" && String(order.razorpayPaymentId || "").startsWith("cod_")) {
+        return res.json({ success: true, message: "Order already confirmed", order });
+      }
+
+      // 1) Check stock for ALL items before touching anything
+      const stockProducts = [];
       for (const item of order.items) {
         const product = await Product.findById(item.productId);
-
         if (!product) continue;
-
         if (product.stock < item.quantity) {
           return res.status(400).json({
             success: false,
             message: `${product.productName} stock not available`,
           });
         }
+        stockProducts.push({ product, qty: item.quantity });
+      }
 
-        product.stock -= item.quantity;
+      // 2) Coupon must still be redeemable (limit may have been reached meanwhile)
+      if (order.couponId) {
+        const redeemed = await redeemCoupon(order);
+        if (!redeemed.redeemed) {
+          return res.status(400).json({
+            success: false,
+            message: "This coupon is no longer available. Please remove it and try again.",
+          });
+        }
+      }
+
+      // 3) Now it is safe to confirm + reduce stock
+      order.paymentStatus = "Pending";
+      order.paymentMethod = "CashOnDelivery";
+      order.status = "Confirmed";
+      order.razorpayPaymentId = "cod_" + orderId;
+      for (const { product, qty } of stockProducts) {
+        product.stock -= qty;
         await product.save();
       }
+      order.stockDeducted = true;
+      invalidateProductCache();
       await order.save();
       await ensureInvoice(order);
       return res.json({
@@ -285,18 +399,17 @@ router.post("/verify-payment", jwtAuth, async (req, res) => {
         .status(404)
         .json({ success: false, message: "Order not found" });
 
+    // Idempotent: payment already recorded and side effects already applied
+    if (order.paymentStatus === "Completed" && order.stockDeducted) {
+      return res.json({ success: true, message: "Payment already verified", order });
+    }
+
     order.paymentStatus = "Completed";
     order.razorpayPaymentId = razorpay_payment_id;
     order.razorpaySignature = razorpay_signature;
     order.status = "Confirmed";
-    order.paidAt = new Date();
-    for (const item of order.items) {
-      await Product.findByIdAndUpdate(item.productId, {
-        $inc: {
-          stock: -item.quantity,
-        },
-      });
-    }
+    order.paidAt = order.paidAt || new Date();
+    await finalizeOrderSideEffects(order);
 
     await order.save();
     await ensureInvoice(order);
@@ -536,11 +649,12 @@ router.post("/webhook", async (req, res) => {
     if (event.event === "payment.captured" && entity) {
       const order = await Order.findOne({ razorpayOrderId: entity.order_id });
 
-      if (order && order.paymentStatus !== "Completed") {
+      if (order && (order.paymentStatus !== "Completed" || !order.stockDeducted)) {
         order.paymentStatus = "Completed";
-        order.razorpayPaymentId = entity.id;
-        order.status = "Confirmed";
-        order.paidAt = new Date();
+        order.razorpayPaymentId = order.razorpayPaymentId || entity.id;
+        order.status = order.status === "Cancelled" ? "Confirmed" : order.status === "Pending" ? "Confirmed" : order.status;
+        order.paidAt = order.paidAt || new Date();
+        await finalizeOrderSideEffects(order);
 
         await order.save();
 

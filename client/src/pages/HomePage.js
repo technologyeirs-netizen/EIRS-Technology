@@ -209,9 +209,7 @@ const HomePage = () => {
   const navigate = useNavigate();
 
   const [categories, setCategories] = useState([]);
-  const visibleCategories = Array.isArray(categories)
-    ? categories.slice(0, 9)
-    : [];
+  const visibleCategories = Array.isArray(categories) ? categories : [];
     const [searchParams] = useSearchParams();
 
 const urlCategory = searchParams.get("categoryId");
@@ -459,7 +457,7 @@ const urlCategory = searchParams.get("categoryId");
                 <div
                   key={cat._id || i}
                   className="hp-cat-card"
-                  onClick={() => navigate(`/products?categoryId=${cat._id}`)}
+                  onClick={() => navigate(`/products?category=${cat._id}`)}
                   style={{ cursor: "pointer" }}
                 >
                   <div

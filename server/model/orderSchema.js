@@ -48,6 +48,13 @@ const orderSchema = new Schema({
         default: 0
     },
     }],
+    // Price breakdown (totalPrice below is the final amount charged, GST included)
+    subtotal: { type: Number, default: 0 },
+    gstAmount: { type: Number, default: 0 },
+    couponCode: { type: String, default: null },
+    couponId: { type: mongoose.Schema.Types.ObjectId, ref: 'Coupon', default: null },
+    couponDiscount: { type: Number, default: 0 },
+    stockDeducted: { type: Boolean, default: false },
     totalPrice: {
         type: Number,
         required: true

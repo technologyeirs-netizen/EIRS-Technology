@@ -8,7 +8,9 @@ const { getAllProducts, getProductById, createProduct, updateProduct, deleteProd
 const { createOrder, getUserOrders, getOrderById, updateOrderStatus, getAllOrders, deleteOrder, cancelOrder, requestRefund, approveRefund, rejectRefund, processRefund, requestAfterDeliveryAction, approveAfterDeliveryRequest, rejectAfterDeliveryRequest, processAfterDeliveryRequest } = require('../controller/orderController');
 const { createServiceBooking, getUserServiceBookings, getAllServiceBookings } = require('../controller/serviceBookingController');
 const { createSubcategory, getAllSubcategories, getSubcategoriesByCategory, getSubcategoryById, updateSubcategory, deleteSubcategory } = require('../controller/subcategoryController');
-const { addReview, getProductReviews, getUserProductReview, updateReview, deleteReview } = require('../controller/reviewController');
+const { addReview, getProductReviews, getUserProductReview, updateReview, deleteReview, canReviewProduct, adminGetAllReviews, adminUpdateReview, adminDeleteReview, adminVerifyReview, adminToggleHideReview } = require('../controller/reviewController');
+const { getAllCoupons, createCoupon, updateCoupon, toggleCoupon, deleteCoupon, getCouponUsage, getAvailableCoupons, validateCoupon } = require('../controller/couponController');
+const optionalAuth = require('../middleware/optionalAuth');
 const { getCrmSyncOverview } = require('../services/crmSyncService');
 const {adminMiddleware} = require('../middleware/adminMiddleware');
 const jwtAuth = require('../middleware/jwtAuth');
@@ -163,8 +165,28 @@ authRouter.post('/after-delivery-requests/:orderId/approve', jwtAuth, adminMiddl
 authRouter.post('/after-delivery-requests/:orderId/reject', jwtAuth, adminMiddleware, rejectAfterDeliveryRequest);
 authRouter.post('/after-delivery-requests/:orderId/process', jwtAuth, adminMiddleware, processAfterDeliveryRequest);
 
+// Coupon Routes (customer)
+authRouter.get('/coupons/available', optionalAuth, getAvailableCoupons);
+authRouter.post('/coupons/validate', jwtAuth, validateCoupon);
+
+// Coupon Routes (admin)
+authRouter.get('/coupons/admin/all', jwtAuth, adminMiddleware, getAllCoupons);
+authRouter.post('/coupons/admin', jwtAuth, adminMiddleware, createCoupon);
+authRouter.put('/coupons/admin/:id', jwtAuth, adminMiddleware, updateCoupon);
+authRouter.patch('/coupons/admin/:id/toggle', jwtAuth, adminMiddleware, toggleCoupon);
+authRouter.get('/coupons/admin/:id/usage', jwtAuth, adminMiddleware, getCouponUsage);
+authRouter.delete('/coupons/admin/:id', jwtAuth, adminMiddleware, deleteCoupon);
+
+// Review Routes (admin moderation) - declared before the :reviewId routes
+authRouter.get('/reviews/admin/all', jwtAuth, adminMiddleware, adminGetAllReviews);
+authRouter.put('/reviews/admin/:reviewId', jwtAuth, adminMiddleware, adminUpdateReview);
+authRouter.patch('/reviews/admin/:reviewId/verify', jwtAuth, adminMiddleware, adminVerifyReview);
+authRouter.patch('/reviews/admin/:reviewId/hide', jwtAuth, adminMiddleware, adminToggleHideReview);
+authRouter.delete('/reviews/admin/:reviewId', jwtAuth, adminMiddleware, adminDeleteReview);
+
 // Review Routes
 authRouter.post('/reviews/add', jwtAuth, addReview);
+authRouter.get('/reviews/product/:productId/can-review', jwtAuth, canReviewProduct);
 authRouter.get('/reviews/product/:productId/user', jwtAuth, getUserProductReview);
 authRouter.get('/reviews/product/:productId', getProductReviews);
 authRouter.put('/reviews/:reviewId', jwtAuth, updateReview);
