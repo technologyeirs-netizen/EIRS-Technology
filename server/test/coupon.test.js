@@ -21,11 +21,13 @@ const base = (o = {}) => ({
   await t('flat', () => assert.strictEqual(svc.computeDiscount(base({ discountType: 'flat', discountValue: 250 }), 1000), 250));
   await t('flat never exceeds subtotal', () => assert.strictEqual(svc.computeDiscount(base({ discountType: 'flat', discountValue: 5000 }), 1000), 1000));
   await t('rounding to 2dp', () => assert.strictEqual(svc.computeDiscount(base({ discountValue: 12.5 }), 333.33), 41.67));
-  await t('totals: GST charged on discounted amount', () => {
+  await t('totals: no GST, total = subtotal - coupon', () => {
     const r = svc.computeTotals(1000, 100);
-    assert.deepStrictEqual(r, { subtotal: 1000, discount: 100, taxable: 900, gst: 162, total: 1062 });
+    assert.deepStrictEqual(r, { subtotal: 1000, discount: 100, taxable: 900, gst: 0, total: 900 });
   });
-  await t('totals without coupon', () => assert.strictEqual(svc.computeTotals(1000, 0).total, 1180));
+  await t('totals without coupon', () => assert.strictEqual(svc.computeTotals(1000, 0).total, 1000));
+
+  await t('totals: 3920 with Rs100 coupon = 3820', () => assert.strictEqual(svc.computeTotals(3920, 100).total, 3820));
 
   console.log('getStaticIneligibility');
   await t('ok', () => assert.strictEqual(svc.getStaticIneligibility(base(), 500), null));
@@ -46,7 +48,7 @@ const base = (o = {}) => ({
   });
   await t('valid returns discount + totals', async () => {
     stub(base(), 0); const r = await svc.validateCouponForUser('SAVE10', 'u1', 2000);
-    assert.ok(r.valid); assert.strictEqual(r.discount, 200); assert.strictEqual(r.totals.total, 2124);
+    assert.ok(r.valid); assert.strictEqual(r.discount, 200); assert.strictEqual(r.totals.total, 1800);
   });
   await t('per-user limit blocks', async () => { stub(base({ maxUsesPerUser: 1 }), 1); const r = await svc.validateCouponForUser('SAVE10', 'u1', 500); assert.ok(!r.valid); assert.match(r.message, /already used/); });
   await t('per-user limit 3 allows 2nd use', async () => { stub(base({ maxUsesPerUser: 3 }), 2); assert.ok((await svc.validateCouponForUser('SAVE10', 'u1', 500)).valid); });

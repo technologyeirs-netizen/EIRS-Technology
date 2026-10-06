@@ -744,21 +744,18 @@ router.get("/orders/:orderId/bill/download", jwtAuth, async (req, res) => {
 
     console.log("📄 FILE PATH:", filePath);
 
-    // Create invoice if missing
+    // Always rebuild the PDF from the saved order so an old cached file
+    // (e.g. one made with GST / without coupon) is never served again.
+    await generateBill(order);
+
+    // Double check
     if (!fs.existsSync(filePath)) {
-      console.log("⚠️ Invoice file missing, generating again...");
+      console.log("❌ Invoice generation failed");
 
-      await generateBill(order);
-
-      // Double check
-      if (!fs.existsSync(filePath)) {
-        console.log("❌ Invoice generation failed");
-
-        return res.status(404).json({
-          success: false,
-          message: "Invoice file not found",
-        });
-      }
+      return res.status(404).json({
+        success: false,
+        message: "Invoice file not found",
+      });
     }
 
     console.log("✅ DOWNLOADING PDF");
