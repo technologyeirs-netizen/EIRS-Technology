@@ -1,7 +1,8 @@
 const Coupon = require('../model/couponSchema');
 const CouponUsage = require('../model/couponUsageSchema');
 
-const GST_RATE = 0.18;
+// GST is NOT charged on orders. The customer pays: cart subtotal - coupon discount.
+const GST_RATE = 0;
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
 /**
@@ -25,10 +26,10 @@ const computeDiscount = (coupon, subtotal) => {
   return round2(Math.max(0, discount));
 };
 
-/** Pure: totals for an order given a subtotal and discount. GST is charged on the discounted amount. */
+/** Pure: totals for an order given a subtotal and discount. No GST: total = subtotal - discount. */
 const computeTotals = (subtotal, discount = 0) => {
   const taxable = round2(Math.max(0, subtotal - discount));
-  const gst = round2(taxable * GST_RATE);
+  const gst = round2(taxable * GST_RATE); // always 0 while GST_RATE is 0
   return { subtotal: round2(subtotal), discount: round2(discount), taxable, gst, total: round2(taxable + gst) };
 };
 

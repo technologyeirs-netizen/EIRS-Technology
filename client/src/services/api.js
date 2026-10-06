@@ -287,6 +287,7 @@ export const productService = {
         }
       }
 
+      
       // Append a cache-buster so the browser and API do not serve stale catalog data.
       const bustParam = shouldBypassCache ? `&_t=${Date.now()}` : '';
       const response = await api.get(`/auth/products?page=${page}&limit=${limit}${bustParam}`, {

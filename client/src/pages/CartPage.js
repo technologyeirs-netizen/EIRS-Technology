@@ -1,3 +1,4 @@
+
 import CouponBox from "../components/CouponBox";
 import useAppliedCoupon from "../hooks/useAppliedCoupon";
 import React from "react";
@@ -16,23 +17,52 @@ const CartPage = () => {
     getTotalPrice,
     clearCart,
   } = useCart();
+
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const subtotalValue = getTotalPrice();
-  const couponState = useAppliedCoupon(subtotalValue);
-  const totalAmount = couponState.total;
+  /*
+   * =========================================================
+   * PRICING
+   * =========================================================
+   *
+   * GST is completely removed.
+   *
+   * Final Total =
+   * Subtotal - Coupon Discount
+   */
 
-  // =========================
-  // EMPTY CART
-  // =========================
+  const subtotalValue = Number(getTotalPrice() || 0);
+
+  const couponState = useAppliedCoupon(subtotalValue);
+
+  const couponDiscount = Math.min(
+    Math.max(0, Number(couponState.discount || 0)),
+    subtotalValue
+  );
+
+  const totalAmount = Math.max(
+    0,
+    subtotalValue - couponDiscount
+  );
+
+  /*
+   * =========================================================
+   * EMPTY CART
+   * =========================================================
+   */
+
   if (cartItems.length === 0) {
     return (
       <div className="cart-page">
         <div className="empty-cart">
           <h2>Your Cart is Empty</h2>
           <p>Add some products to get started!</p>
-          <Link to="/products" className="btn-continue-shopping">
+
+          <Link
+            to="/products"
+            className="btn-continue-shopping"
+          >
             Continue Shopping
           </Link>
         </div>
@@ -40,24 +70,40 @@ const CartPage = () => {
     );
   }
 
-  // =========================
-  // STOCK SAFE UPDATE FUNCTION
-  // =========================
-  const handleIncrease = (item) => {
-    const stock = item.stock || 0;
+  /*
+   * =========================================================
+   * STOCK SAFE UPDATE
+   * =========================================================
+   */
 
-    if (item.quantity >= stock) {
-      alert("⚠️ Only " + stock + " items available in stock");
+  const handleIncrease = (item) => {
+    const stock = Number(item.stock || 0);
+    const quantity = Number(item.quantity || 1);
+
+    if (stock <= 0) {
+      alert("⚠️ This product is out of stock");
       return;
     }
 
-    updateQuantity(item._id, item.quantity + 1);
+    if (quantity >= stock) {
+      alert(`⚠️ Only ${stock} items available in stock`);
+      return;
+    }
+
+    updateQuantity(item._id, quantity + 1);
   };
 
   const handleDecrease = (item) => {
-    updateQuantity(item._id, item.quantity - 1);
+    const quantity = Number(item.quantity || 1);
+
+    if (quantity <= 1) {
+      return;
+    }
+
+    updateQuantity(item._id, quantity - 1);
   };
-  console.log("Cart Items => ", cartItems);
+
+  console.log("Cart Items =>", cartItems);
 
   return (
     <div className="cart-page">
@@ -65,6 +111,10 @@ const CartPage = () => {
         <h1>Shopping Cart</h1>
 
         <div className="cart-content">
+          {/* =========================
+              CART ITEMS
+          ========================= */}
+
           <div className="cart-items">
             <div className="cart-header">
               <span className="col-product">Product</span>
@@ -76,24 +126,56 @@ const CartPage = () => {
             </div>
 
             {cartItems.map((item) => {
-              const stock = item.stock || 0;
-              const isOutOfStock = stock === 0;
-              const isMaxReached = item.quantity >= stock;
+              const stock = Number(item.stock || 0);
+              const quantity = Number(item.quantity || 1);
+              const price = Number(item.price || 0);
+
+              const discount = Math.min(
+                Math.max(Number(item.discount || 0), 0),
+                100
+              );
+
+              const isOutOfStock = stock <= 0;
+              const isMaxReached = quantity >= stock;
+
+              /*
+               * Product-level discount
+               *
+               * Example:
+               * Price = ₹1000
+               * Discount = 10%
+               * Final product price = ₹900
+               */
+              const discountedPrice =
+                price * (1 - discount / 100);
+
+              const itemSubtotal =
+                discountedPrice * quantity;
 
               return (
-                <div key={item._id} className="cart-row">
+                <div
+                  key={item._id}
+                  className="cart-row"
+                >
                   {/* PRODUCT */}
+
                   <div className="item-product">
                     {item.image && (
                       <img
                         src={item.image}
-                        alt={item.name}
+                        alt={
+                          item.productName ||
+                          item.name ||
+                          "Product"
+                        }
                         className="item-image"
                       />
                     )}
 
                     <div className="item-details">
-                      <h3>{item.productName || item.name}</h3>
+                      <h3>
+                        {item.productName || item.name}
+                      </h3>
 
                       <p className="item-category">
                         {typeof item.category === "object"
@@ -104,43 +186,59 @@ const CartPage = () => {
                   </div>
 
                   {/* PRICE */}
+
                   <div className="item-price">
-                    ₹{parseFloat(item.price).toLocaleString()}
+                    ₹
+                    {price.toLocaleString("en-IN", {
+                      maximumFractionDigits: 2,
+                    })}
                   </div>
 
                   {/* STOCK */}
+
                   <div className="item-stock">
                     <span
                       className={`stock-status ${
-                        stock > 0 ? "in-stock" : "out-of-stock"
+                        stock > 0
+                          ? "in-stock"
+                          : "out-of-stock"
                       }`}
                     >
-                      {stock > 0 ? `${stock} Available` : "Out of Stock"}
+                      {stock > 0
+                        ? `${stock} Available`
+                        : "Out of Stock"}
                     </span>
                   </div>
 
                   {/* QUANTITY */}
+
                   <div className="item-quantity">
                     <button
                       className="qty-btn"
                       onClick={() => handleDecrease(item)}
-                      disabled={item.quantity <= 1}
+                      disabled={quantity <= 1}
                     >
                       <FaMinus />
                     </button>
 
-                    <span className="qty-value">{item.quantity}</span>
+                    <span className="qty-value">
+                      {quantity}
+                    </span>
 
                     <button
                       className="qty-btn"
-                      onClick={() => handleIncrease(item)}
-                      disabled={isOutOfStock || isMaxReached}
+                      onClick={() =>
+                        handleIncrease(item)
+                      }
+                      disabled={
+                        isOutOfStock || isMaxReached
+                      }
                       title={
                         isOutOfStock
                           ? "Out of Stock"
                           : isMaxReached
-                            ? "Max stock reached"
-                            : ""
+                          ? "Max stock reached"
+                          : ""
                       }
                     >
                       <FaPlus />
@@ -148,19 +246,25 @@ const CartPage = () => {
                   </div>
 
                   {/* SUBTOTAL */}
+
                   <div className="item-subtotal">
                     ₹
-                    {(
-                      (item.price - (item.price * (item.discount || 0)) / 100) *
-                      (item.quantity || 1)
-                    ).toLocaleString()}
+                    {itemSubtotal.toLocaleString(
+                      "en-IN",
+                      {
+                        maximumFractionDigits: 2,
+                      }
+                    )}
                   </div>
 
                   {/* ACTION */}
+
                   <div className="item-action">
                     <button
                       className="btn-delete"
-                      onClick={() => removeFromCart(item._id)}
+                      onClick={() =>
+                        removeFromCart(item._id)
+                      }
                     >
                       <FaTrash />
                     </button>
@@ -170,41 +274,94 @@ const CartPage = () => {
             })}
           </div>
 
-          {/* SUMMARY */}
+          {/* =========================
+              ORDER SUMMARY
+          ========================= */}
+
           <div className="cart-summary">
             <div className="summary-card">
               <h2>Order Summary</h2>
 
+              {/* SUBTOTAL */}
+
               <div className="summary-row">
                 <span>Subtotal</span>
-                <span>₹{subtotalValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+
+                <span>
+                  ₹
+                  {subtotalValue.toLocaleString("en-IN", {
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
               </div>
 
-              {couponState.discount > 0 && (
-                <div className="summary-row" style={{ color: "#15803d", fontWeight: 700 }}>
-                  <span>Coupon ({couponState.applied.code})</span>
-                  <span>− ₹{couponState.discount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+              {/* COUPON DISCOUNT */}
+
+              {couponDiscount > 0 && (
+                <div
+                  className="summary-row"
+                  style={{
+                    color: "#15803d",
+                    fontWeight: 700,
+                  }}
+                >
+                  <span>
+                    Coupon (
+                    {couponState.applied?.code})
+                  </span>
+
+                  <span>
+                    − ₹
+                    {couponDiscount.toLocaleString(
+                      "en-IN",
+                      {
+                        maximumFractionDigits: 2,
+                      }
+                    )}
+                  </span>
                 </div>
               )}
+
+              {/* SHIPPING */}
 
               <div className="summary-row">
                 <span>Shipping</span>
                 <span>₹0 (Free)</span>
               </div>
 
-              <div className="summary-row">
-                <span>Tax (18%)</span>
-                <span>₹{couponState.gst.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
-              </div>
+              {/* 
+                GST INTENTIONALLY REMOVED
+                No GST / Tax row here.
+              */}
+
+              {/* TOTAL */}
 
               <div className="summary-row total">
                 <span>Total</span>
-                <span>₹{totalAmount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+
+                <span>
+                  ₹
+                  {totalAmount.toLocaleString("en-IN", {
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
               </div>
 
+              {/* COUPON NOTICE */}
+
               {couponState.notice && (
-                <p style={{ color: "#b45309", fontSize: 13, margin: "8px 0" }}>{couponState.notice}</p>
+                <p
+                  style={{
+                    color: "#b45309",
+                    fontSize: 13,
+                    margin: "8px 0",
+                  }}
+                >
+                  {couponState.notice}
+                </p>
               )}
+
+              {/* COUPON BOX */}
 
               {user && (
                 <div style={{ margin: "14px 0" }}>
@@ -217,6 +374,8 @@ const CartPage = () => {
                 </div>
               )}
 
+              {/* CHECKOUT */}
+
               {user ? (
                 <button
                   className="btn-checkout"
@@ -224,8 +383,14 @@ const CartPage = () => {
                     navigate("/checkout", {
                       state: {
                         cartItems,
+                        subtotalValue,
+                        couponDiscount,
                         totalAmount,
-                        userId: user.id || user._id,
+                        couponCode:
+                          couponState.applied?.code ||
+                          undefined,
+                        userId:
+                          user._id || user.id,
                         userName: user.name,
                         userEmail: user.email,
                       },
@@ -235,19 +400,31 @@ const CartPage = () => {
                   Proceed to Checkout
                 </button>
               ) : (
-                <Link to="/signin" className="btn-checkout">
+                <Link
+                  to="/signin"
+                  className="btn-checkout"
+                >
                   Login to Checkout
                 </Link>
               )}
 
+              {/* CONTINUE SHOPPING */}
+
               <button
                 className="btn-continue-shopping-secondary"
-                onClick={() => (window.location.href = "/products")}
+                onClick={() =>
+                  (window.location.href = "/products")
+                }
               >
                 Continue Shopping
               </button>
 
-              <button className="btn-clear-cart" onClick={clearCart}>
+              {/* CLEAR CART */}
+
+              <button
+                className="btn-clear-cart"
+                onClick={clearCart}
+              >
                 Clear Cart
               </button>
             </div>

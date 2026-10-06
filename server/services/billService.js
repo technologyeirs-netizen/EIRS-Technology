@@ -29,6 +29,11 @@ const generateBill = async (order) => {
       const fileName = `invoice_${order._id}.pdf`;
       const filePath = path.join(invoicesDir, fileName);
 
+      // Orders placed before GST was removed were really charged GST (stored in gstAmount).
+      // For those we keep showing it so the invoice matches what the customer paid.
+      const legacyGst = Math.max(0, Number(order.gstAmount || 0));
+      const hasLegacyGst = legacyGst > 0;
+
       const doc = new PDFDocument({ size: "A4", margin: 40 });
       const stream = fs.createWriteStream(filePath);
       doc.pipe(stream);
@@ -71,7 +76,7 @@ const generateBill = async (order) => {
       doc
         .fontSize(18)
         .fillColor(colors.secondary)
-        .text("TAX INVOICE", 400, 40, { align: "right" });
+        .text(hasLegacyGst ? "TAX INVOICE" : "INVOICE", 400, 40, { align: "right" });
 
       // LINE
       doc
@@ -84,7 +89,10 @@ const generateBill = async (order) => {
 
       const invoiceNumber =
         order.invoice?.invoiceNumber || `INV-${Date.now()}`;
-      const date = new Date().toLocaleDateString("en-IN");
+      // Use the order's own date so re-generating the PDF never changes it
+      const date = new Date(
+        order.invoice?.invoiceDate || order.orderDate || order.createdAt || Date.now()
+      ).toLocaleDateString("en-IN");
 
       doc
         .fontSize(10)
@@ -189,10 +197,12 @@ const generateBill = async (order) => {
 
       // ================= TOTAL =================
 
+      // totalPrice is exactly what the customer paid at checkout
+      // (cart subtotal - coupon discount, no GST).
       const grandTotal = Number(order.totalPrice || 0);
-      const gst = grandTotal - grandTotal / 1.18;
-      const couponDiscount = Number(order.couponDiscount || 0);
+      const couponDiscount = Math.max(0, Number(order.couponDiscount || 0));
       const hasCoupon = couponDiscount > 0;
+      const itemsTotal = grandTotal - legacyGst + couponDiscount;
 
       y += 20;
 
@@ -203,12 +213,13 @@ const generateBill = async (order) => {
       }
 
       const rows = [];
+      rows.push(["Items Total:", money(itemsTotal), null]);
       if (hasCoupon) {
-        rows.push(["Items Total:", money(grandTotal - gst + couponDiscount), null]);
         rows.push([`Coupon (${order.couponCode || "DISCOUNT"}):`, `- ${money(couponDiscount)}`, "#15803d"]);
       }
-      rows.push(["Taxable Value:", money(grandTotal - gst), null]);
-      rows.push(["GST (18%):", money(gst), null]);
+      if (hasLegacyGst) {
+        rows.push(["GST (18%):", money(legacyGst), null]);
+      }
 
       const boxHeight = rows.length * 20 + 55;
       doc.rect(300, y, 255, boxHeight).fill(colors.light);
@@ -231,7 +242,7 @@ const generateBill = async (order) => {
         .fontSize(12)
         .fillColor(colors.secondary)
         .font("Helvetica-Bold")
-        .text("Grand Total:", 320, ry + 12);
+        .text("Total Paid:", 320, ry + 12);
 
       doc.text(money(grandTotal), 470, ry + 12);
 
