@@ -21,6 +21,7 @@ import {
 } from "react-icons/fa";
 
 import { orderService } from "../services/api";
+import { getOrderGst } from "../utils/gst";
 import "../styles/OrdersPage.css";
 
 const STATUS_STEPS = ["Pending", "Confirmed", "Shipped", "Delivered"];
@@ -302,13 +303,10 @@ const OrdersPage = () => {
   };
 
   /*
-   * GST is no longer charged on new orders (gstAmount = 0).
-   * Orders placed earlier really were charged GST, so for those we
-   * show the row to keep Subtotal - Coupon + GST = Total Paid.
+   * GST is NOT added to the price. The paid amount (totalPrice) is
+   * treated as GST-inclusive and split into Taxable + CGST + SGST
+   * for display only.
    */
-  const getLegacyGst = (order) =>
-    Math.max(0, Number(order?.gstAmount || 0));
-
   const filteredOrders =
     filter === "All"
       ? orders
@@ -639,11 +637,14 @@ const OrdersPage = () => {
                   order.afterDeliveryRequest.status ===
                     "None");
 
-              const itemsSubtotal =
-                calculateItemsSubtotal(order);
-
               const couponDiscount =
                 getCouponDiscount(order);
+
+              // Subtotal shown = amount paid + coupon, so that
+              // Subtotal - Coupon = Total Paid always holds.
+              const itemsSubtotal =
+                getFinalTotal(order) + couponDiscount ||
+                calculateItemsSubtotal(order);
 
               const couponCode =
                 getCouponCode(order);
@@ -651,8 +652,8 @@ const OrdersPage = () => {
               const finalTotal =
                 getFinalTotal(order);
 
-              const legacyGst =
-                getLegacyGst(order);
+              const gstInfo =
+                getOrderGst(order);
 
               return (
                 <div
@@ -1253,20 +1254,6 @@ const OrdersPage = () => {
                               </div>
                             )}
 
-                            {/* GST - only for old orders that were charged GST */}
-                            {legacyGst > 0 && (
-                              <div className="op-price-row">
-                                <span>GST (18%)</span>
-
-                                <span>
-                                  Rs.
-                                  {formatAmount(
-                                    legacyGst
-                                  )}
-                                </span>
-                              </div>
-                            )}
-
                             {/* Shipping */}
                             <div className="op-price-row">
 
@@ -1293,6 +1280,34 @@ const OrdersPage = () => {
                                 )}
                               </strong>
                             </div>
+
+                            {/* Tax breakup - already included in Total Paid */}
+                            {gstInfo.paid > 0 && (
+                              <div
+                                className="op-price-row"
+                                style={{ fontSize: "12px", color: "#64748b", fontWeight: 600, marginTop: "6px" }}
+                              >
+                                <span>Tax breakup (included in price)</span>
+                                <span></span>
+                              </div>
+                            )}
+                            {gstInfo.paid > 0 && (
+                              <>
+                                <div className="op-price-row">
+                                  <span>Taxable Value</span>
+                                  <span>Rs.{formatAmount(gstInfo.taxable)}</span>
+                                </div>
+                                <div className="op-price-row">
+                                  <span>CGST ({gstInfo.half}%)</span>
+                                  <span>Rs.{formatAmount(gstInfo.cgst)}</span>
+                                </div>
+                                <div className="op-price-row">
+                                  <span>SGST ({gstInfo.half}%)</span>
+                                  <span>Rs.{formatAmount(gstInfo.sgst)}</span>
+                                </div>
+                              </>
+                            )}
+
 
                             {/* Payment Method */}
                             <div className="op-price-row">
