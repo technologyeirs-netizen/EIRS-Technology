@@ -473,7 +473,7 @@ const AdminOrders = () => {
                                   <td><span className="ao-qty-badge">{item.quantity}</span></td>
                                   <td>Rs.{item.price?.toLocaleString('en-IN') || '0'}</td>
                                   <td className="ao-item-total">
-                                    Rs.{((item.quantity || 0) * (item.price || 0)).toLocaleString('en-IN')}
+                                    Rs.{((item.quantity || 0) * (item.price || 0) * (1 - Number(item.discount || 0) / 100)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                   </td>
                                 </tr>
                               ))}
@@ -518,8 +518,14 @@ const AdminOrders = () => {
                           <div className="ao-price-box">
                             <div className="ao-price-row">
                               <span>Subtotal ({order.totalItems || order.items?.length} items)</span>
-                              <span>{formatCurrency(getOrderTotal(order))}</span>
+                              <span>{formatCurrency(getOrderTotal(order) + Number(order.couponDiscount || 0))}</span>
                             </div>
+                            {Number(order.couponDiscount || 0) > 0 && (
+                              <div className="ao-price-row" style={{ color: '#15803d', fontWeight: 600 }}>
+                                <span>Coupon{order.couponCode ? ` (${order.couponCode})` : ''}</span>
+                                <span>- {formatCurrency(order.couponDiscount)}</span>
+                              </div>
+                            )}
                             <div className="ao-price-row">
                               <span>Shipping</span>
                               <span className="ao-free">FREE</span>

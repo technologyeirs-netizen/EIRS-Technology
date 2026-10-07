@@ -2,6 +2,7 @@ const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
+const { computeOrderGst } = require("../utils/gstBreakdown");
 
 const downloadImage = async (url, filepath) => {
   const response = await axios({ url, method: "GET", responseType: "stream" });
@@ -29,10 +30,10 @@ const generateBill = async (order) => {
       const fileName = `invoice_${order._id}.pdf`;
       const filePath = path.join(invoicesDir, fileName);
 
-      // Orders placed before GST was removed were really charged GST (stored in gstAmount).
-      // For those we keep showing it so the invoice matches what the customer paid.
-      const legacyGst = Math.max(0, Number(order.gstAmount || 0));
-      const hasLegacyGst = legacyGst > 0;
+      // Customer paid `order.totalPrice` (no GST shown at cart/checkout).
+      // On the bill we split that paid amount into taxable value + CGST + SGST.
+      const gstInfo = computeOrderGst(order);
+      const half = gstInfo.halfPercent;
 
       const doc = new PDFDocument({ size: "A4", margin: 40 });
       const stream = fs.createWriteStream(filePath);
@@ -76,7 +77,7 @@ const generateBill = async (order) => {
       doc
         .fontSize(18)
         .fillColor(colors.secondary)
-        .text(hasLegacyGst ? "TAX INVOICE" : "INVOICE", 400, 40, { align: "right" });
+        .text("TAX INVOICE", 400, 40, { align: "right" });
 
       // LINE
       doc
@@ -159,32 +160,34 @@ const generateBill = async (order) => {
         .font("Helvetica-Bold");
 
       doc.text("Product", 50, y + 8);
-      doc.text("HSN", 220, y + 8);
-      doc.text("Qty", 290, y + 8);
-      doc.text("Rate", 350, y + 8);
-      doc.text("Discount", 410, y + 8);
+      doc.text("HSN", 195, y + 8);
+      doc.text("Qty", 240, y + 8);
+      doc.text("Taxable", 270, y + 8);
+      doc.text(`CGST ${half}%`, 335, y + 8);
+      doc.text(`SGST ${half}%`, 400, y + 8);
       doc.text("Total", 480, y + 8);
 
       y += 35;
 
       // ================= PRODUCTS =================
 
-      for (const item of order.items) {
-        const qty = Number(item.quantity || 1);
-        const price = Number(item.price || 0);
-        const discount = Number(item.discount || 0);
+      for (const line of gstInfo.lines) {
+        const item = line.item;
 
-        const discountedPrice = price - (price * discount) / 100;
-        const total = discountedPrice * qty;
+        if (y > 720) {
+          doc.addPage();
+          y = 60;
+        }
 
         doc.fillColor(colors.text).font("Helvetica").fontSize(9);
 
-        doc.text(item.productName || "-", 50, y, { width: 160 });
-        doc.text(item.hsn || "N/A", 220, y);
-        doc.text(String(qty), 290, y);
-        doc.text(price.toFixed(2), 350, y);
-        doc.text(`${discount}%`, 410, y);
-        doc.text(total.toFixed(2), 480, y);
+        doc.text(item.productName || "-", 50, y, { width: 140 });
+        doc.text(item.hsn || "N/A", 195, y, { width: 42 });
+        doc.text(String(line.qty), 240, y);
+        doc.text(money(line.taxable), 270, y);
+        doc.text(money(line.cgst), 335, y);
+        doc.text(money(line.sgst), 400, y);
+        doc.text(money(line.paid), 480, y);
 
         doc
           .moveTo(40, y + 18)
@@ -197,29 +200,26 @@ const generateBill = async (order) => {
 
       // ================= TOTAL =================
 
-      // totalPrice is exactly what the customer paid at checkout
-      // (cart subtotal - coupon discount, no GST).
+      // totalPrice is exactly what the customer paid. GST is already inside it.
       const grandTotal = Number(order.totalPrice || 0);
       const couponDiscount = Math.max(0, Number(order.couponDiscount || 0));
       const hasCoupon = couponDiscount > 0;
-      const itemsTotal = grandTotal - legacyGst + couponDiscount;
 
       y += 20;
 
       // Keep the totals box on the page
-      if (y > 650) {
+      if (y > 620) {
         doc.addPage();
         y = 60;
       }
 
       const rows = [];
-      rows.push(["Items Total:", money(itemsTotal), null]);
       if (hasCoupon) {
-        rows.push([`Coupon (${order.couponCode || "DISCOUNT"}):`, `- ${money(couponDiscount)}`, "#15803d"]);
+        rows.push([`Coupon (${order.couponCode || "DISCOUNT"}) applied:`, `- ${money(couponDiscount)}`, "#15803d"]);
       }
-      if (hasLegacyGst) {
-        rows.push(["GST (18%):", money(legacyGst), null]);
-      }
+      rows.push(["Taxable Value:", money(gstInfo.taxable), null]);
+      rows.push([`CGST (${half}%):`, money(gstInfo.cgst), null]);
+      rows.push([`SGST (${half}%):`, money(gstInfo.sgst), null]);
 
       const boxHeight = rows.length * 20 + 55;
       doc.rect(300, y, 255, boxHeight).fill(colors.light);
